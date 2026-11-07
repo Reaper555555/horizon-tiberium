@@ -30,6 +30,7 @@ bindings = [
   { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
   { name = "stack", ty = "&crate::items::ItemStack", value = "stack" },
   { name = "pos", ty = "[i32; 3]", value = "pos" },
+  { name = "face", ty = "[i32; 3]", value = "face" },
   { name = "claimed", ty = "&mut bool", value = "&mut *claimed" },
 ]
 
