@@ -1,10 +1,10 @@
 [mod]
 id = "tiberium"
-version = "0.1.1"
+version = "0.1.5"
 priority = 100
 
 [compatibility]
-horizon_revision = "2ebf00a0281c592f79191e76fce0e7d522c6f425"
+horizon_revision = "66f3981f522b24c250b21523a70080965b940424"
 
 [[module]]
 id = "runtime"
