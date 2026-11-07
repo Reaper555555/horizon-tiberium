@@ -1,0 +1,8 @@
+id = "tiberium"
+name = "Tiberium"
+version = "0.1.1"
+description = "Tiberium: slow crystalline growth, contamination, bio-protection and sonic cleansing. Harvest crystals with a pickaxe, then seal the shards in capsules via crafting."
+authors = ["Horizon Tiberium Project"]
+api = "0.2"
+side = "both"
+capabilities = ["registries"]

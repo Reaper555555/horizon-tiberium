@@ -1,0 +1,15 @@
+{
+  "type": "minecraft:crafting_shapeless",
+  "ingredients": [
+    {
+      "item": "tiberium:empty_capsule"
+    },
+    {
+      "item": "tiberium:raw_shard"
+    }
+  ],
+  "result": {
+    "id": "tiberium:sealed_capsule",
+    "count": 1
+  }
+}
