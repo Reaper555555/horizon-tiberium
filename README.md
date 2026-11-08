@@ -1,46 +1,25 @@
-# Tiberium for Horizon (Minecraft 26.3 in Rust)
+# Tiberium for Horizon
 
-Alpha prototype of Tiberium from Command & Conquer: Tiberium universe.
+Mod for Horizon (Minecraft-like, Rust). Inspired by Command & Conquer Tiberium.
 
-## Features (0.1.1)
-
-- **Crystals** grow in stages (seed → base → spire → crown), then spread sideways.
-- **Soil infection** at different rates (dirt/grass fast, sand medium, stone slow).
-- **Toxicity**: periodic damage near Tiberium or while holding raw shards unless wearing full bio-suit.
-- **Bio-protection**: full 4-piece set grants complete immunity.
-- **Harvest**: break crystals with a pickaxe → `raw_shard`. Craft `empty_capsule` + `raw_shard` → `sealed_capsule` (safe storage/fuel).
-- **Sonic tools**: portable disruptor (consumes charges) and stationary pylons that slowly cleanse the area.
+**Current version: 0.1.22**
 
 ## Install
+Copy from the release / install zip:
+- `horizon-mods/tiberium.hmod`
+- `horizon-native-mods/tiberium-0.1.22.hnmod`
 
-### Ready-to-use (recommended)
+Then run **Native Build** in Horizon.
 
-1. Download `tiberium-0.1.1-install.zip` from [Releases](https://github.com/Reaper555555/horizon-tiberium/releases) (or the Artifacts of this conversation).
-2. Unpack into the **root of your Horizon game instance** (the folder that contains `options.txt` / `horizon-mods` / `horizon-native-mods`).
-3. In the launcher: enable the content mod, and for the native mod let the launcher build a custom instance (first build takes time).
+## Growth (0.1.22)
+- **Fields first**: crystals expand sideways, 5 angular stages on a single block.
+- **One tower per 64×64 region**, only after ~100 crystals within 100 blocks.
+- Strong desiccation: leaves strip, grass dies, soil dries; no green carpet traces.
+- Water absorption, infection, bio-suit, sonic pylon/gun.
 
-Contents of the install zip:
+## Source layout
+- `content/` — .hmod assets (blockstates, models, recipes)
+- `native/` — .hnmod mixins (`runtime.rs`, hooks)
 
-```
-horizon-mods/tiberium.hmod
-horizon-native-mods/tiberium-0.1.1.hnmod
-```
-
-### From source
-
-- **Content mod** (`content/`): put the folder or the built `.hmod` into `horizon-mods/`.
-- **Native mod** (`native/`): put the `.hnmod` (or the mixins folder + horizon-native.json) into `horizon-native-mods/` and let the Horizon launcher compile it against the pinned revision.
-
-## Changelog
-
-### 0.1.1
-- Collection reworked: crystals must be broken with a pickaxe (drop raw shards).
-- New shapeless recipe: empty capsule + raw shard → sealed capsule.
-- Removed right-click harvest with empty capsule.
-
-### 0.1.0
-- Initial prototype by ChatGPT: growth, infection, toxicity, bio-suit, sonic tools, capsules.
-
-## Licence
-
-MIT (code & data). Textures are simple placeholders.
+## License
+Prototype / fan work. Tiberium is a trademark of its respective owners.
