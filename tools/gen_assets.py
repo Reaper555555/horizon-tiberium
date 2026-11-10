@@ -50,11 +50,44 @@ STAGE_WIDTH = {"p0": 4, "p1": 6, "p2": 8, "p3": 9, "p4": 10, "p5": 11, "p6": 12}
 SEGMENTS = ["shaft", "tip"]
 ROTATIONS = ["r0", "r1", "r2", "r3"]
 
+# Настенные кристаллы: прижимаются к стене, как факелы, и растут из угла.
+WALL_SHAPES = {
+    "wall_e": [
+        (5.0, 0.0, 2.0, 13.0, "z", 0.0),
+        (5.0, 2.6, 1.5, 9.0, "z", 10.0),
+        (5.0, -2.6, 1.5, 10.5, "z", -10.0),
+    ],
+    "wall_w": [
+        (-5.0, 0.0, 2.0, 13.0, "z", 0.0),
+        (-5.0, 2.6, 1.5, 9.0, "z", 10.0),
+        (-5.0, -2.6, 1.5, 10.5, "z", -10.0),
+    ],
+    "wall_n": [
+        (0.0, -5.0, 2.0, 13.0, "x", 0.0),
+        (2.6, -5.0, 1.5, 9.0, "x", 10.0),
+        (-2.6, -5.0, 1.5, 10.5, "x", -10.0),
+    ],
+    "wall_s": [
+        (0.0, 5.0, 2.0, 13.0, "x", 0.0),
+        (2.6, 5.0, 1.5, 9.0, "x", 10.0),
+        (-2.6, 5.0, 1.5, 10.5, "x", -10.0),
+    ],
+    # Потолок: кристаллы свисают сверху.
+    "wall_up": [
+        (0.0, 0.0, 2.2, 12.0, "z", 0.0),
+        (2.8, 0.6, 1.6, 8.0, "z", 10.0),
+        (-2.8, -0.6, 1.6, 9.0, "z", -10.0),
+    ],
+}
+
+
 # Стиль = форма + наклон.
 STYLES = []
 for _shape in SHAPE_NAMES:
     for _lean in LEANS:
         STYLES.append(_shape + _lean)
+for _wall in WALL_SHAPES:
+    STYLES.append(_wall)
 STYLES.sort()
 
 
@@ -161,9 +194,12 @@ def crystal_model(style, stage, rot, segment):
     lean_axis, lean_angle, lean_dx, lean_dz = LEANS[lean]
     scale_w = STAGE_WIDTH[stage] / 12.0
     scale_h = 0.55 + 0.45 * scale_w
-    spread = 0.4 + 0.6 * scale_w
+    # Настенный кристалл прижат к стене и не должен от неё отползать.
+    wall = shape.startswith("wall_")
+    spread = 1.0 if wall else 0.4 + 0.6 * scale_w
     elements = []
-    for dx, dz, half, height, axis, angle in CLUSTER_SHAPES[shape]:
+    cluster = CLUSTER_SHAPES.get(shape) or WALL_SHAPES[shape]
+    for dx, dz, half, height, axis, angle in cluster:
         dx, dz, axis, angle = rotate_layout(dx, dz, axis, angle, rot)
         if lean_axis == axis:
             angle += lean_angle
@@ -184,7 +220,11 @@ def crystal_model(style, stage, rot, segment):
             continue
         origin = [(x1 + x2) / 2, 0, (z1 + z2) / 2]
         tilt = (axis, angle) if angle else None
-        elements.append(element(x1, 0, z1, x2, h, z2, tilt, "#crystal", origin))
+        if shape == "wall_up":
+            # С потолка: кристаллы свисают вниз.
+            elements.append(element(x1, 16 - h, z1, x2, 16, z2, tilt, "#crystal", origin))
+        else:
+            elements.append(element(x1, 0, z1, x2, h, z2, tilt, "#crystal", origin))
         # Каждый кристалл скопления — ровно один элемент. Наконечник отличается
         # только высотой, а не второй коробкой поверх первой.
     if not elements:
@@ -193,6 +233,8 @@ def crystal_model(style, stage, rot, segment):
     # землю, а блок выглядит пустым. Сверху её не видно — она ниже
     # вершин кристаллов.
     core_h = max(el["to"][1] for el in elements)
+    if shape == "wall_up":
+        core_h = 16
     core_w = 3.4 * (0.45 + 0.55 * scale_w)
     elements.append(element(8 - core_w, 0, 8 - core_w, 8 + core_w, core_h, 8 + core_w, None, "#crystal"))
     return {
@@ -307,24 +349,51 @@ COLUMN_INSET = {
 INSET = 3  # px
 
 
-def column_model(style):
-    """Блок шпиля.
+# Шестигранная колонна: пересечение двух прямоугольников. Боковые стороны
+# уходят за границы блока на 2 px — тогда соседние колонны смыкаются
+# вплотную и сквозь массив не видно мира.
+HEX_A = (-2.0, 5.0, 18.0, 11.0)
+HEX_B = (5.0, -2.0, 11.0, 18.0)
 
-    Сердцевина — целый куб, крайние блоки — шестигранный срез (два
-    скрещённых прямоугольника). Углы у края срезаны, поэтому массив
-    читается как шестиугольники, а не как кубы, и при этом не остаётся
-    прозрачных дыр на смежных блоках.
+
+def hex_prism(angle=None, origin=(8.0, 0.0, 8.0)):
+    """Две скрещённые коробки — шестигранная колонна."""
+    ax1, az1, ax2, az2 = HEX_A
+    bx1, bz1, bx2, bz2 = HEX_B
+    return [
+        element(ax1, 0, az1, ax2, 16, az2, ("y", angle) if angle else None,
+                "#column", list(origin)),
+        element(bx1, 0, bz1, bx2, 16, bz2, ("y", angle) if angle else None,
+                "#column", list(origin)),
+    ]
+
+
+# Сдвиг края массива: 22.5° на сторону света. Шесть вариантов — по числу
+# направлений, в которые смотрит край.
+EDGE_TILT = {
+    "edge_e": 22.5,
+    "edge_se": 45.0,
+    "edge_sw": 67.5,
+    "edge_w": 90.0,
+    "edge_nw": 112.5,
+    "edge_ne": 135.0,
+}
+
+
+def column_model(style):
+    """Блок крупной структуры.
+
+    Каждый блок массива — шестигранная колонна: два скрещённых прямоугольника.
+    Так массив читается как связанные между собой колонны, а не как кубы.
+    Боковые блоки повёрнуты: край выходит скошенным, а не ступенькой, и
+    повёрнутые колонны смыкаются с соседями без зазоров.
     """
     if style == "core":
-        # Сердцевина — целый блок: массив читается как единая масса.
-        elements = [element(0, 0, 0, 16, 16, 16, None, "#column")]
+        elements = hex_prism()
     else:
-        # Боковой блок — половина блока: он прилегает к сердцевине и
-        # образует ступенчатый край. Сверху такая ступенька читается
-        # как сторона треугольника.
-        elements = [element(0, 0, 0, 16, 8, 16, None, "#column")]
+        elements = hex_prism(EDGE_TILT.get(style))
         if style == "tip":
-            # Кромка вершины: кристаллический гребень поверх ступеньки.
+            # Кромка вершины: кристаллический гребень поверх колонны.
             shards = [
                 (5.0, 6.0, 2.6, 15.0, "z", 9.0),
                 (10.5, 7.5, 2.2, 16.0, "z", -11.0),
@@ -641,6 +710,11 @@ def main():
     bs_dir = os.path.join(CONTENT, "assets", NS, "blockstates")
     tex_dir = os.path.join(CONTENT, "assets", NS, "textures", "block")
 
+    # Старые модели подчищаем: иначе в сборку попадают лишние файлы.
+    for stale in os.listdir(models_dir):
+        if stale.startswith(("crystal_", "column_")) and stale.endswith(".json"):
+            os.remove(os.path.join(models_dir, stale))
+
     # 1. Модели кристаллов
     variants = {}
     for segment in SEGMENTS:
@@ -648,9 +722,16 @@ def main():
             for stage in STAGES:
                 for rot in ROTATIONS:
                     name = f"crystal_{segment}_{style}_{stage}_{rot}"
+                    key = f"segment={segment},style={style},shift={stage},rotation={rot}"
+                    if style.startswith("wall_") and rot != "r0":
+                        # У настенного кристала сторона задана стилем, поворот
+                        # не нужен: все четыре поворота ссылаются на одну модель.
+                        variants[key] = {
+                            "model": f"{NS}:block/crystal_{segment}_{style}_{stage}_r0"
+                        }
+                        continue
                     write_json(os.path.join(models_dir, name + ".json"),
                                crystal_model(style, stage, rot, segment))
-                    key = f"segment={segment},style={style},shift={stage},rotation={rot}"
                     variants[key] = {"model": f"{NS}:block/{name}"}
 
     # 2. Модели колонн
