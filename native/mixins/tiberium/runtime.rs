@@ -95,6 +95,8 @@ struct Site {
 struct Spire {
     base: [i32; 3],
     radius: u8,
+    /// Насколько гребень вытянут вдоль наклона.
+    stretch: i32,
     height: u8,
     layer: u8,
     lean: (i32, i32),
@@ -110,6 +112,10 @@ static SERVER_TICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 /// Молнии ионного шторма: позиция и номер тика. Ими пользуется хук
 /// block_ignite, который висит на уровне и не видит игрового контекста.
 static STRIKES: OnceLock<Mutex<Vec<([i32; 3], u64)>>> = OnceLock::new();
+/// Сайты, созданные во время роста. Рост идёт без мьютекса `sites()`
+/// (иначе spread() встанет на собственном же замке), поэтому новые
+/// сайты складываются сюда и переносятся в общий список в конце тика.
+static PENDING_SITES: OnceLock<Mutex<Vec<Site>>> = OnceLock::new();
 
 fn sites() -> &'static Mutex<Vec<Site>> {
     SITES.get_or_init(|| Mutex::new(Vec::new()))
@@ -131,6 +137,33 @@ fn density_cache() -> &'static Mutex<HashMap<(i32, i32), (f32, u64)>> {
 }
 fn strikes() -> &'static Mutex<Vec<([i32; 3], u64)>> {
     STRIKES.get_or_init(|| Mutex::new(Vec::new()))
+}
+fn pending_sites() -> &'static Mutex<Vec<Site>> {
+    PENDING_SITES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Забирает список сайтов из-под замка. Пока идёт работа с миром, замок
+/// свободен: growth зовёт spread() и wall_growth(), а те берут тот же
+/// мьютекс — держать его на всё время роста означало бы вечный висяк.
+fn take_sites() -> Option<Vec<Site>> {
+    let mut guard = sites().lock().ok()?;
+    Some(std::mem::take(&mut *guard))
+}
+
+/// Возвращает сайты на место и подбирает те, что созданы во время роста.
+fn restore_sites(list: &mut Vec<Site>) {
+    let mut fresh: Vec<Site> = Vec::new();
+    if let Ok(mut pending) = pending_sites().lock() {
+        fresh.append(&mut pending);
+    }
+    if let Ok(mut guard) = sites().lock() {
+        guard.append(list);
+        for site in fresh {
+            if !guard.iter().any(|s| s.base == site.base) {
+                guard.push(site);
+            }
+        }
+    }
 }
 
 /// Рядом ли с этой точкой удар молнии шторма.
@@ -295,11 +328,8 @@ fn restyle(game: &mut Game<'_>, site: &Site) {
 
 /// Находит новые кристаллы рядом с игроком и заводит на них «сайты».
 fn rescan(game: &Game<'_>, centre: [i32; 3]) {
-    let mut list = match sites().lock() {
-        Ok(l) => l,
-        Err(_) => return,
-    };
     let r = cfg::SCAN_RADIUS;
+    let mut found: Vec<Site> = Vec::new();
     for dx in -r..=r {
         for dz in -r..=r {
             for dy in -4..=4 {
@@ -310,9 +340,6 @@ fn rescan(game: &Game<'_>, centre: [i32; 3]) {
                 let below = [p[0], p[1] - 1, p[2]];
                 if is_block(game, below, CRYSTAL) {
                     continue; // не нижний блок колонки
-                }
-                if list.iter().any(|s| s.base == p) {
-                    continue;
                 }
                 let seed = hash3(p[0], p[1], p[2], 0x71BE);
                 let style = STYLES[(seed % STYLES.len() as u64) as usize];
@@ -331,7 +358,7 @@ fn rescan(game: &Game<'_>, centre: [i32; 3]) {
                         break;
                     }
                 }
-                list.push(Site {
+                found.push(Site {
                     base: p,
                     style,
                     rotation,
@@ -339,6 +366,17 @@ fn rescan(game: &Game<'_>, centre: [i32; 3]) {
                     height,
                     seed,
                 });
+            }
+        }
+    }
+    if found.is_empty() {
+        return;
+    }
+    // Список обновляем коротко, без чтения мира под замком.
+    if let Ok(mut list) = sites().lock() {
+        for site in found {
+            if !list.iter().any(|s| s.base == site.base) {
+                list.push(site);
             }
         }
     }
@@ -415,7 +453,7 @@ fn spread(
         if !place_crystal(game, ids, dimension, above, style, rotation, 0, "tip") {
             continue;
         }
-        if let Ok(mut list) = sites().lock() {
+        if let Ok(mut list) = pending_sites().lock() {
             if !list.iter().any(|s| s.base == above) {
                 list.push(Site {
                     base: above,
@@ -475,7 +513,7 @@ fn wall_growth(
     let seed = hash3(spot[0], spot[1], spot[2], 0xBEEF);
     let style = STYLES[(seed % STYLES.len() as u64) as usize];
     if place_crystal(game, ids, dimension, spot, style, rotation, 0, "tip") {
-        if let Ok(mut list) = sites().lock() {
+        if let Ok(mut list) = pending_sites().lock() {
             if !list.iter().any(|s| s.base == spot) {
                 list.push(Site {
                     base: spot,
@@ -511,15 +549,22 @@ fn dry_soil(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
 // ---------------------------------------------------------------- шпили -------
 
 /// Клетки шестиугольного диска в плоскости XZ (odd-r offset).
-fn hex_cells(radius: u8) -> Vec<(i32, i32)> {
+/// Клетки основания шпиля: гребень, вытянутый вдоль наклона.
+///
+/// Клетки идут подряд без зазоров, поэтому грань у края срезается и шпиль
+/// читается как цельный шестигранный массив, а не как набор кубов.
+fn ridge_cells(radius: u8, stretch: i32, along_x: bool) -> Vec<(i32, i32)> {
     let r = radius as i32;
     let mut out = Vec::new();
-    for row in -r..=r {
-        let q_min = -r - row;
-        let q_max = r - row;
-        for q in q_min..=q_max {
-            let x = q + (row - (row & 1)) / 2;
-            out.push((x, row));
+    for perp in -r..=r {
+        // Длина среза сужается к краям, чтобы гребень был с закруглёнными торцами.
+        let half = r + stretch - perp.abs() / 2;
+        for along in -half..=half {
+            if along_x {
+                out.push((along, perp));
+            } else {
+                out.push((perp, along));
+            }
         }
     }
     out
@@ -556,7 +601,7 @@ fn edge_style(dx: i32, dz: i32) -> &'static str {
 
 /// Строит очередной слой шпиля.
 fn build_spire_layer(game: &mut Game<'_>, ids: &Ids, spire: &Spire, dimension: &str) {
-    let cells = hex_cells(spire.radius);
+    let cells = ridge_cells(spire.radius, spire.stretch, spire.lean.0 != 0);
     let layer = spire.layer;
     let top = layer + 1 >= spire.height;
     let steps = (layer as i32) / 5;
@@ -632,8 +677,9 @@ fn maybe_spire(game: &mut Game<'_>, ids: &Ids, centre: [i32; 3], dimension: &str
         }
     }
     let seed = hash3(centre[0], centre[1], centre[2], 0x5911E);
-    let radius = 3 + (seed % 4) as u8;
-    let height = 10 + ((seed >> 4) % 14) as u8;
+    let radius = 3 + (seed % 3) as u8;
+    let stretch = 3 + ((seed >> 12) % 6) as i32;
+    let height = 12 + ((seed >> 4) % 16) as u8;
     let lean = match (seed >> 8) % 4 {
         0 => (1, 0),
         1 => (-1, 0),
@@ -652,6 +698,7 @@ fn maybe_spire(game: &mut Game<'_>, ids: &Ids, centre: [i32; 3], dimension: &str
     let spire = Spire {
         base: [centre[0], ground, centre[2]],
         radius,
+        stretch,
         height,
         layer: 0,
         lean,
@@ -666,8 +713,10 @@ fn maybe_spire(game: &mut Game<'_>, ids: &Ids, centre: [i32; 3], dimension: &str
 
 /// Продвигает шпили: каждый слой ждёт полного предыдущего.
 fn advance_spires(game: &mut Game<'_>, ids: &Ids, dimension: &str) {
+    // Список тоже берём из-под замка: сборка слоя ходит в мир, и держать
+    // мьютекс на всё время нельзя.
     let mut list = match spires().lock() {
-        Ok(l) => l,
+        Ok(mut l) => std::mem::take(&mut *l),
         Err(_) => return,
     };
     for spire in list.iter_mut() {
@@ -678,6 +727,9 @@ fn advance_spires(game: &mut Game<'_>, ids: &Ids, dimension: &str) {
         spire.layer += 1;
     }
     list.retain(|s| s.layer < s.height + 4);
+    if let Ok(mut guard) = spires().lock() {
+        guard.append(&mut list);
+    }
 }
 
 // ---------------------------------------------------------------- шторм -------
@@ -801,11 +853,13 @@ pub fn player_tick(game: &mut Game<'_>) {
         rescan(game, centre);
     }
 
-    // Рост.
+    // Рост. Список сайтов берётся из-под мьютекса: во время работы с
+    // миром замок должен быть свободен, иначе spread() и wall_growth()
+    // (их зовёт grow_site) упрутся в него же и повесят серверный поток.
     {
-        let mut list = match sites().lock() {
-            Ok(l) => l,
-            Err(_) => return,
+        let mut list = match take_sites() {
+            Some(l) => l,
+            None => return,
         };
         for site in list.iter_mut() {
             if (site.base[0] - centre[0]).abs() > cfg::SCAN_RADIUS
@@ -815,6 +869,7 @@ pub fn player_tick(game: &mut Game<'_>) {
             }
             grow_site(game, &ids, site, tick, &dimension);
         }
+        restore_sites(&mut list);
     }
 
     // Шпили.

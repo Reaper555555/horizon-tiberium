@@ -34,12 +34,13 @@ SHAPES = {
     "j": [((1, 2), (15, 8)), ((2, 7), (14, 14)), ((4, 1), (10, 15))],
 }
 # Наклон: (ось, угол). Положительный угол — наклон в +X (ось z) или +Z (ось x).
+# Наклон скопления: ось, угол и сдвиг (для осей, отличных от оси наклона).
 LEANS = {
-    "": None,
-    "xp": ("z", -22.5),
-    "xn": ("z", 22.5),
-    "zp": ("x", -22.5),
-    "zn": ("x", 22.5),
+    "": (None, 0.0, 0.0, 0.0),
+    "xp": ("z", 14.0, 1.2, 0.0),
+    "xn": ("z", -14.0, -1.2, 0.0),
+    "zp": ("x", 14.0, 0.0, 1.2),
+    "zn": ("x", -14.0, 0.0, -1.2),
 }
 SHAPE_NAMES = ["a", "b", "c", "j"]
 
@@ -90,7 +91,7 @@ def scale_box(x1, z1, x2, z2, target_w):
     return (round(nx1, 2), round(nz1, 2), round(nx2, 2), round(nz2, 2))
 
 
-def element(x1, y1, z1, x2, y2, z2, rot=None, tex="#crystal"):
+def element(x1, y1, z1, x2, y2, z2, rot=None, tex="#crystal", origin=None):
     el = {
         "from": [x1, y1, z1],
         "to": [x2, y2, z2],
@@ -100,28 +101,102 @@ def element(x1, y1, z1, x2, y2, z2, rot=None, tex="#crystal"):
         },
     }
     if rot:
-        el["rotation"] = {"origin": [8, 0, 8], "axis": rot[0], "angle": rot[1]}
+        el["rotation"] = {
+            "origin": origin or [8, 0, 8],
+            "axis": rot[0],
+            "angle": rot[1],
+        }
     return el
 
 
+# Скопления кристаллов: (сдвиг X, сдвиг Z, полуширина, высота, ось, угол).
+# Сдвиги — от центра блока (8, 8); полуширина и высота — в пикселях.
+# Каждый блок — это не одна игла, а гроздь из нескольких кристаллов разной
+# высоты: так выглядит тиберий в референсах.
+CLUSTER_SHAPES = {
+    # высокий центральный и два боковых
+    "a": [
+        (0.0, 0.0, 3.0, 16.0, "z", 0.0),
+        (-4.2, 1.4, 2.3, 11.0, "z", 16.0),
+        (4.2, -1.2, 2.3, 12.5, "z", -14.0),
+    ],
+    # плотная гроздь из четырёх
+    "b": [
+        (0.0, 0.0, 3.4, 9.0, "z", 0.0),
+        (-3.4, 0.6, 2.2, 14.0, "z", 12.0),
+        (3.4, -0.6, 2.2, 13.0, "z", -12.0),
+        (0.6, -3.4, 2.1, 11.0, "x", 8.0),
+    ],
+    # два крупных и один мелкий
+    "c": [
+        (-2.4, 0.4, 3.0, 15.0, "z", 10.0),
+        (3.0, -1.0, 2.6, 12.0, "z", -10.0),
+        (0.4, 3.4, 1.9, 8.5, "x", 0.0),
+    ],
+    # пять кристаллов
+    "j": [
+        (0.0, 0.0, 2.5, 15.0, "z", 0.0),
+        (-3.8, -2.2, 1.9, 10.0, "z", 14.0),
+        (3.8, -2.2, 1.9, 11.0, "z", -14.0),
+        (-2.6, 3.6, 1.7, 8.0, "x", 10.0),
+        (3.0, 3.4, 1.7, 9.0, "x", -10.0),
+    ],
+}
+
+
+def rotate_layout(dx, dz, axis, angle, rot):
+    """Поворот раскладки скопления на 90/180/270°."""
+    if rot == "r0":
+        return dx, dz, axis, angle
+    if rot == "r1":  # 90°
+        return dz, -dx, ("x" if axis == "z" else "z"), angle
+    if rot == "r2":  # 180°
+        return -dx, -dz, axis, angle
+    return -dz, dx, ("x" if axis == "z" else "z"), angle  # r3: 270°
+
+
 def crystal_model(style, stage, rot, segment):
-    """Модель кристалла: форма + наклон + масштаб стадии + поворот в плане."""
+    """Модель кристалла: скопление разной формы, наклон, стадия и поворот."""
     shape, lean = style_shape(style)
-    boxes = SHAPES[shape]
-    target = STAGE_WIDTH[stage]
-    lean_rot = LEANS[lean]
+    lean_axis, lean_angle, lean_dx, lean_dz = LEANS[lean]
+    scale_w = STAGE_WIDTH[stage] / 12.0
+    scale_h = 0.55 + 0.45 * scale_w
+    spread = 0.4 + 0.6 * scale_w
     elements = []
-    top_y = 16 if segment == "shaft" else 12
-    for (bx1, bz1), (bx2, bz2) in boxes:
-        sx1, sz1, sx2, sz2 = scale_box(bx1, bz1, bx2, bz2, target)
-        rx1, rz1, rx2, rz2 = rot_box(sx1, sz1, sx2, sz2, rot)
-        elements.append(element(rx1, 0, rz1, rx2, top_y, rz2, lean_rot))
-    if segment == "tip":
-        # наконечник: сужающаяся шапка над основой
-        cap_w = max(2.0, target * 0.55)
-        cx1, cz1, cx2, cz2 = scale_box(3, 3, 13, 13, cap_w)
-        rx1, rz1, rx2, rz2 = rot_box(cx1, cz1, cx2, cz2, rot)
-        elements.append(element(rx1, 12, rz1, rx2, 16, rz2, lean_rot))
+    for dx, dz, half, height, axis, angle in CLUSTER_SHAPES[shape]:
+        dx, dz, axis, angle = rotate_layout(dx, dz, axis, angle, rot)
+        if lean_axis == axis:
+            angle += lean_angle
+        else:
+            dx += lean_dx
+            dz += lean_dz
+        hw = half * (0.45 + 0.55 * scale_w)
+        h = height * scale_h
+        if segment == "tip":
+            h = min(h, 12.0)
+        cx = 8.0 + dx * spread
+        cz = 8.0 + dz * spread
+        x1 = max(0.0, cx - hw)
+        x2 = min(16.0, cx + hw)
+        z1 = max(0.0, cz - hw)
+        z2 = min(16.0, cz + hw)
+        if x2 - x1 < 1.0 or z2 - z1 < 1.0:
+            continue
+        origin = [(x1 + x2) / 2, 0, (z1 + z2) / 2]
+        tilt = (axis, angle) if angle else None
+        elements.append(element(x1, 0, z1, x2, h, z2, tilt, "#crystal", origin))
+        if segment == "tip":
+            # острый верх: узкая шапка над основой
+            cap = hw * 0.5
+            elements.append(
+                element(
+                    max(0.0, cx - cap), h, max(0.0, cz - cap),
+                    min(16.0, cx + cap), min(16.0, h + 4.0), min(16.0, cz + cap),
+                    tilt, "#crystal", origin,
+                )
+            )
+    if not elements:
+        elements.append(element(6, 0, 6, 10, 8, 10, None, "#crystal"))
     return {
         "ambientocclusion": False,
         "render_type": "minecraft:cutout",
@@ -140,19 +215,89 @@ COLUMN_STYLES = [
 ]
 # Иконки предметов: имя -> вид рисунка.
 ITEM_ICONS = {
-    "raw_shard": "shard",
-    "sealed_capsule": "capsule",
-    "empty_capsule": "empty_capsule",
-    "bio_helmet": "bio_helmet",
-    "bio_chestplate": "bio_chestplate",
-    "bio_leggings": "bio_leggings",
-    "bio_boots": "bio_boots",
-    "sonic_charge": "sonic",
-    "sonic_disruptor": "sonic",
-    "crystal": "cluster",
-    "sonic_pylon": "pylon",
-    "column": "column",
+    # Иконки предметов взяты из 0.1.13 как есть (LEGACY_PNG): капсулы,
+    # броня и приборы там нарисованы хорошо, перерисовывать их незачем.
 }
+# Оригинальные текстуры мода 0.1.13: их вид устраивает, поэтому они
+# переносятся как есть (в base64, чтобы репозиторий оставался текстовым).
+LEGACY_PNG = {
+    "block/crystal.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAVklEQVR4nGMUSzD5z8LCxPD3"
+        "7z8GCP2fAcZHZuOSY2JiYmSA4d+//0HpvwzI4vjlSNaALkeR7YwMTJTZDvcCebZD5CiynZGB"
+        "iTLbGUejcTQaGZiYGBkAbErl3eSvTOoAAAAASUVORK5CYII="
+    ),
+    "block/sonic_pylon.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAfUlEQVR4nGPUMLf6z0ABYGFg"
+        "YGAwMtcnS/O5kxchBjAwMDD4uDsxMDMzM7x//56BmZkZA6OL7z5wFOECBgYGho8fPzIwMzMz"
+        "sLKyYtWMLo7iBQYGBpwacRmK1wB8GmFyOA3A5lxshmIYMBoGwyIMdu47zEAOYGFggOQqcgEA"
+        "2FlMStQTlBcAAAAASUVORK5CYII="
+    ),
+    "block/tainted_soil.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAB/klEQVR4nFWTQW4bMQxFH0lJ"
+        "4zhOvApyh97/VAVaJG1sz4xEsgsNAnQhEAJI8fPzSd5/vOZ1aSxFuXdnsSMWZTHj3gdLmTEz"
+        "uZ7af3n6dj7hmeweXFoBQAQWMx7DGRHc9oGKcGmVR3fO1UggSXRE4pGoCI/uAOzu3Pqge/C6"
+        "NJop52pEJk/V2EaQOWt0RHCuxu/HRo8AoKpxaYVTMb72Mbsl3Lqze9DDSSAyKSOSpQivS6N7"
+        "oCJcT5U/WwegmbJ7AIGJUFS4d4CgmaIvS8Ej6R6YCutw7t15aRUTqKoI8q1KRQAoKow4FDRT"
+        "TIXMZHOniLIOpwcsgGdSVIlMSDhXwyMpyjRx88FtH1Sb3ZIkMlGB2z64tEKPoEewjkEznXeH"
+        "MiI4Hv6eOQFRwUi6J7/uK++XpyPD+Fw711Odo7y0eqwu2EagAgIEwTqSU1Gu1vjaB0WFosrz"
+        "wcvXPuYa54zCx7ohMpNAWEypOrcQOTWuw4lMft4eqAjla+9UMzLh7fmEihCZVJ1Gbh4Igmcy"
+        "IvCA1pTnWlEBLWoIUE3IhI+1EwmbBz2SERNdAUwmkbd9MGIqmhzkNOvvPjARPteNyJzMp/AY"
+        "/u28iJBwKOUg0YweThHhqRimchg2TySYCbtPfE1giyQjp4kikCmYCJsHHomJHN96EnjbO8+t"
+        "IMDuUx3AP6I9X2L8W1RwAAAAAElFTkSuQmCC"
+    ),
+    "item/bio_boots.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAUklEQVR4nGNgGAUUA0YY48KL"
+        "6/+xKTCQ0GTEJ8eCLNC3ZA6KgqKYFIJyTKQ5GBMMvAEoYbDXTgxFsogIORQDnA+9QjU+hrAc"
+        "xV6gOB1Q6gDKAQDYvh2zbomV6AAAAABJRU5ErkJggg=="
+    ),
+    "item/bio_chestplate.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAhklEQVR4nGNgoAW48OL6/wsv"
+        "rv8nJMbAwMDAgq6IgYGBoW/JHDjfQEKT8cKL6/+RxRgYGBgMJDQZGRgYGJjQTYQpxAXQ5TEM"
+        "QFeMbDs2wIJL4oAqlD45h4EByna4jakOrwuIAdQzgJBfkQEsbKjiApyBiC3AsIGBD0RGGANb"
+        "OicEYMl5YAEAAPs/8YFBxTIAAAAASUVORK5CYII="
+    ),
+    "item/bio_helmet.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAgklEQVR4nGNgoBAw4pK48OL6"
+        "f3QxAwlNDPUsuDT3LZmDVRzdECZiNTMwMDD0LZmD4TIUA/BpxmUI3ABiNGMzBMMLpAJ4gGAL"
+        "dULAQEKTESMW+pbMYdix/iBOTR6B9gxFMSlwPtwL2OKYkO0oBpALsCYkj0B7og1AcTYpAUmq"
+        "lwcxAABa4T1cc0wHMgAAAABJRU5ErkJggg=="
+    ),
+    "item/bio_leggings.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAU0lEQVR4nGNgGGjAiMy58OL6"
+        "f2I1GkhoMjIwMDCwoEv0LZlDUHNRTAqczUSsjbgAdQ3A5nxk52JTR9AFsMAiygXkANoasKik"
+        "lxGZpr8LhoYBFAMAw+8PpFx6nzMAAAAASUVORK5CYII="
+    ),
+    "item/empty_capsule.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAb0lEQVR4nGNgoBAwYhPMb2r5"
+        "j0vDxLoaFD1MlLoAw4AnH1/htB2bPIYXnnx89d/CyQunASf2bWOQ4ReD66PYCyy4JDwrmirR"
+        "xbZ31LWji1E/EIeeATgDEVuAEW1AY10V0S6g2AtYMxO+5IycCqkCAGpVHllIrCctAAAAAElF"
+        "TkSuQmCC"
+    ),
+    "item/raw_shard.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAe0lEQVR4nMXTMQ6AIAwF0NZ4"
+        "AuPgneQehE1mZmZGwj2433dyESyYGPwjpS/tUCIhCRlSnYhokpo3WprII3DF2SgiVSAhw9nY"
+        "hRTAvbmFNFdoIa+AWsYCPhjSrPi/CcYAmhX7YIqPtf0/mWCuPWpW3HOJYhIy1mNHQoaEnaoX"
+        "PUPv+MtRAAAAAElFTkSuQmCC"
+    ),
+    "item/sealed_capsule.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAbklEQVR4nGNgoBAwYhPMb2r5"
+        "j0vDxLoaFD1MlLoAw4AnH1/htB2bPIYXnnx89d/CyQunASf2bWOQ4ReD66PYCyy4JP5WWWCI"
+        "MbedwBCjfiAOPQNwBiK2ACPagMa6KqJdQLEXsGYmfMkZORVSBQAA81QcZlXeL5oAAAAASUVO"
+        "RK5CYII="
+    ),
+    "item/sonic_charge.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAXUlEQVR4nGNgGPKAEV3g+MMz"
+        "//FpsJQ3QdHDgk3RvBnLsWpOyojEEMNqAAMDA8OtNEUUvtqs+1jVMeEygFiA14DFCl6UGRD7"
+        "YBtlBhADBt4AnNGIK9rQAcUpceABAAIwErrchv0WAAAAAElFTkSuQmCC"
+    ),
+    "item/sonic_disruptor.png": (
+        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAeUlEQVR4nGNgoBAw4pI4f//G"
+        "f3QxQ0UNDPUs+Ezv6Z8NZ5cUpmJVg9eAEwWG+KQZGBgYGJgIqiAAUPykY+eM4u/vCxLhbM6E"
+        "+XD2lUN74foodgHeMEC2FRegbhggg/P3b/xHj0Zs6YB2LnAJC8NIiXtWraK+C4aBAQC0JBuS"
+        "ERqEuQAAAABJRU5ErkJggg=="
+    ),
+}
+
 # Насколько блок срезан с каждой стороны (px) для каждого стиля.
 COLUMN_INSET = {
     "core": [],
@@ -165,21 +310,42 @@ INSET = 3  # px
 
 
 def column_model(style):
+    """Блок шпиля: шестигранная решётка без зазоров + кристаллическая кромка.
+
+    Текстура у всех колонн одна и та же (зелёная из 0.1.13), поэтому шпиль
+    читается как цельная масса, а не как набор кубов.
+    """
     sides = COLUMN_INSET[style]
     x1 = INSET if "w" in sides else 0
     x2 = 16 - INSET if "e" in sides else 16
     z1 = INSET if "n" in sides else 0
     z2 = 16 - INSET if "s" in sides else 16
+    y1, y2 = (2, 16) if style == "tip" else (0, 16)
+    tex = f"{NS}:block/crystal"
+    elements = [element(x1, y1, z1, x2, y2, z2, None, "#column")]
     if style == "tip":
-        y1, y2 = 2, 16
-    else:
-        y1, y2 = 0, 16
-    tex = f"{NS}:block/column_{style}"
+        # Кромка шпиля: несколько наклонённых кристаллов, как гребень.
+        shards = [
+            (5.0, 6.0, 2.6, 13.0, "z", 9.0),
+            (10.5, 7.5, 2.2, 15.0, "z", -11.0),
+            (8.0, 11.0, 2.0, 11.0, "x", 8.0),
+        ]
+        for dx, dz, half, height, axis, angle in shards:
+            cx = min(max(dx, x1 + half), x2 - half)
+            cz = min(max(dz, z1 + half), z2 - half)
+            # Кристалл идёт от низа блока вверх: наклон выносит его вершину
+            # за верхнюю грань, и кромка шпиля получается рваной.
+            elements.append(
+                element(
+                    cx - half, 0, cz - half, cx + half, height, cz + half,
+                    (axis, angle), "#column", [cx, 0, cz],
+                )
+            )
     return {
         "ambientocclusion": False,
         "render_type": "minecraft:cutout",
         "textures": {"particle": tex, "column": tex},
-        "elements": [element(x1, y1, z1, x2, y2, z2, None, "#column")],
+        "elements": elements,
     }
 
 
@@ -203,6 +369,16 @@ def write_png(path, rgba_rows):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         f.write(png)
+
+
+def write_legacy(rel):
+    """Пишет оригинальную текстуру 0.1.13 как есть (в репозитории она в base64)."""
+    import base64
+
+    path = os.path.join(CONTENT, "assets", NS, "textures", rel)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(base64.b64decode(LEGACY_PNG[rel]))
 
 
 def green_facets(width=16, height=16, base=(52, 138, 48), light=(104, 196, 74), dark=(28, 84, 30)):
@@ -377,19 +553,13 @@ def main():
     write_json(os.path.join(bs_dir, "column.json"),
                {"variants": {f"style={s}": {"model": f"{NS}:block/column_{s}"} for s in COLUMN_STYLES}})
 
-    # 4. Текстуры: всё рисуется кодом, в репозитории бинарных файлов нет.
-    write_png(os.path.join(tex_dir, "crystal.png"), green_facets())
-    write_png(os.path.join(tex_dir, "column_core.png"), column_texture("core"))
-    write_png(os.path.join(tex_dir, "column_tip.png"), column_texture("tip"))
-    for s in COLUMN_STYLES:
-        if s not in ("core", "tip"):
-            write_png(os.path.join(tex_dir, f"column_{s}.png"), column_texture(s))
-    item_dir = os.path.join(CONTENT, "assets", NS, "textures", "item")
-    for name, kind in ITEM_ICONS.items():
-        write_png(os.path.join(item_dir, f"{name}.png"), item_icon(kind))
-    # Заражённая земля и пилон — тоже кодом.
-    write_png(os.path.join(tex_dir, "tainted_soil.png"), soil_texture())
-    write_png(os.path.join(tex_dir, "sonic_pylon.png"), pylon_texture())
+    # 4. Текстуры. Оригинальные из 0.1.13 (кристалл, земля, пилон и все
+    #    иконки предметов) переносятся как есть — их вид устраивает.
+    #    Остальное рисуется кодом.
+    for rel in LEGACY_PNG:
+        write_legacy(rel)
+    # Своих текстур у колонн нет: все они берут зелёную текстуру кристалла,
+    # чтобы шпиль выглядел цельной массой, а не набором разных кубов.
 
     print(f"стилей: {len(STYLES)} | стадий: {len(STAGES)} | поворотов: {len(ROTATIONS)}")
     print(f"моделей кристаллов: {len(SEGMENTS) * len(STYLES) * len(STAGES) * len(ROTATIONS)}")

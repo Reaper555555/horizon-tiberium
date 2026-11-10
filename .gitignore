@@ -1,5 +1,5 @@
 # Собирается генератором
-content/assets/tiberium/models/
+content/assets/tiberium/models/block/
 content/assets/tiberium/blockstates/
 content/assets/tiberium/textures/
 # Артефакты сборки
