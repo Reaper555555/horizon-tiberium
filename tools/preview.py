@@ -161,16 +161,17 @@ def render_scene(scene, ax):
 
 
 def spire_scene():
-    """Массив, каким он вырастает в игре: слои сужаются вверх."""
+    """Массив, каким он вырастает в игре: ровные слои одинакового сечения."""
     scene = []
-    for layer, radius in enumerate((3, 2, 1)):
-        cells = hex_disc(radius)
+    radius = 3
+    cells = hex_disc(radius)
+    for layer in range(4):
         by_model = {}
         for x, z in cells:
             by_model.setdefault(column_model_for(x, z, radius), []).append((x, layer, z))
         for name, positions in by_model.items():
             scene.append((name, positions))
-    scene.append(("column_tip", [(0, 3, 0)]))
+    scene.append(("column_tip", [(0, 4, 0)]))
     return scene
 
 
@@ -184,7 +185,7 @@ def main():
     if args.scene == "spire":
         fig, ax = plt.subplots(figsize=(6.4, 6.4))
         render_scene(spire_scene(), ax)
-        ax.set_title("крупная структура: слои сужаются вверх", fontsize=9)
+        ax.set_title("крупная структура: ровные слои одинакового сечения", fontsize=9)
         fig.tight_layout()
         out = os.path.abspath(args.out)
         os.makedirs(os.path.dirname(out), exist_ok=True)
