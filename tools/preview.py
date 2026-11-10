@@ -111,13 +111,23 @@ EDGE_DIRS = {
 }
 
 
-def footprint(radius, stretch, along_x=True):
-    """Сечение массива: ромб с вытянутыми концами."""
-    cells = []
-    for a in range(-radius, radius + 1):
-        b_max = radius - abs(a)
-        for b in range(-(b_max + stretch), b_max + stretch + 1):
-            cells.append((a, b) if along_x else (b, a))
+def footprint(seed, area):
+    """Произвольная форма сечения: пятно клеток от центра.
+
+    Тот же алгоритм, что в рантайме мода, — превью показывает ровно то,
+    что вырастет в игре.
+    """
+    cells = [(0, 0)]
+    state = seed | 1
+    mask = (1 << 64) - 1
+    while len(cells) < area:
+        state = (state * 6364136223846793005 + 1442695040888963407) & mask
+        idx = (state >> 17) % len(cells)
+        x, z = cells[idx]
+        d = [(1, 0), (-1, 0), (0, 1), (0, -1)][(state >> 33) % 4]
+        nxt = (x + d[0], z + d[1])
+        if nxt not in cells:
+            cells.append(nxt)
     return cells
 
 
@@ -168,18 +178,18 @@ def render_scene(scene, ax):
 
 
 def spire_scene():
-    """Массив, каким он вырастает в игре: ровные слои одинакового сечения."""
+    """Массив, каким он вырастает в игре: произвольное сечение из кубов,
+    верхние слои съезжают по одной координате."""
     scene = []
-    radius = 2
-    stretch = 2
-    cells = footprint(radius, stretch)
-    for layer in range(4):
-        by_model = {}
+    cells = footprint(0x1234_5678, 14)
+    lean = (1, 0)
+    lean_step = 2
+    for layer in range(5):
+        shift = (layer // lean_step) * lean[0]
+        shift_z = (layer // lean_step) * lean[1]
         for x, z in cells:
-            by_model.setdefault(column_model_for(x, z, cells), []).append((x, layer, z))
-        for name, positions in by_model.items():
-            scene.append((name, positions))
-    scene.append(("column_tip", [(0, 4, 0)]))
+            style = "column_tip" if layer == 4 else "column_core"
+            scene.append((style, [(x + shift, layer, z + shift_z)]))
     return scene
 
 
@@ -209,7 +219,7 @@ def main():
         fig, ax = plt.subplots(figsize=(6.4, 6.4))
         if args.scene == "spire":
             render_scene(spire_scene(), ax)
-            ax.set_title("крупная структура: связанные шестигранные колонны", fontsize=9)
+            ax.set_title("крупная структура: кубы, произвольное сечение, верхние слои съезжают", fontsize=9)
         else:
             render_scene(wall_scene(), ax)
             ax.set_title("настенные кристаллы: прижаты к стене", fontsize=9)
