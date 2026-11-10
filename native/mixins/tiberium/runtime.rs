@@ -115,13 +115,13 @@ struct Spire {
     /// Уровень земли под массивом. Если под кристаллом пусто, массив
     /// дотягивается до земли, чтобы не висел в воздухе.
     ground: i32,
-    /// Радиус сечения (ромб) и вытянутость гребня.
-    radius: i32,
-    stretch: i32,
-    /// Вдоль какой оси вытянут гребень.
-    along_x: bool,
-    /// Направление наклона: верхние слои смещаются в эту сторону.
+    /// Форма сечения: произвольный набор клеток. Один и тот же для всех
+    /// слоёв — сам массив задаёт форму, а не отдельный блок.
+    cells: Vec<(i32, i32)>,
+    /// Направление, в которое съезжают верхние слои: по одной координате.
     lean: (i32, i32),
+    /// Через сколько слоёв делается сдвиг.
+    lean_step: u8,
     height: u8,
     /// Текущий слой.
     layer: u8,
@@ -599,26 +599,14 @@ fn dry_soil(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
 /// по углам, и массив читается как шестиугольники, а не как кубы.
 /// Клетки конкретного слоя: от одной точки у основания до широкого гребня.
 fn layer_cells(spire: &Spire, layer: u8) -> Vec<(i32, i32)> {
-    // Сечение одинаковое для всех слоёв: массив не сужается вверх.
-    // Форма — ромб с вытянутыми концами: с торца он сходится в угол,
-    // и сверху массив читается как связанные между собой колонны.
-    let mut cells = Vec::new();
-    for a in -spire.radius..=spire.radius {
-        let b_max = spire.radius - a.abs();
-        for b in -(b_max + spire.stretch)..=(b_max + spire.stretch) {
-            if spire.along_x {
-                cells.push((a, b));
-            } else {
-                cells.push((b, a));
-            }
-        }
-    }
-    // Верхние слои смещаются в сторону наклона: массив заваливается.
-    let shift = (layer as i32 / 3) * spire.lean.0;
-    let shift_z = (layer as i32 / 3) * spire.lean.1;
-    cells = cells
-        .into_iter()
-        .map(|(a, b)| (a + shift, b + shift_z))
+    // Форма сечения одна и та же для всех слоёв: массив не сужается вверх.
+    // Верхние слои съезжают по одной координате — массив заваливается.
+    let shift = (layer as i32 / spire.lean_step.max(1) as i32) * spire.lean.0;
+    let shift_z = (layer as i32 / spire.lean_step.max(1) as i32) * spire.lean.1;
+    let mut cells: Vec<(i32, i32)> = spire
+        .cells
+        .iter()
+        .map(|&(a, b)| (a + shift, b + shift_z))
         .collect();
     // Порядок от центра наружу: каждый следующий блок касается уже
     // поставленного, иначе крайние блоки слоя висели бы в воздухе.
@@ -626,35 +614,31 @@ fn layer_cells(spire: &Spire, layer: u8) -> Vec<(i32, i32)> {
     cells
 }
 
-/// Направление грани для клетки на границе шестиугольника.
-fn edge_style(dx: i32, dz: i32) -> &'static str {
-    // Шесть направлений: E, W, NE, NW, SE, SW.
-    let ax = dx as f64;
-    let az = dz as f64;
-    let dirs: [(&'static str, f64, f64); 6] = [
-        ("edge_e", 1.0, 0.0),
-        ("edge_w", -1.0, 0.0),
-        ("edge_ne", 1.0, -1.0),
-        ("edge_nw", -1.0, -1.0),
-        ("edge_se", 1.0, 1.0),
-        ("edge_sw", -1.0, 1.0),
-    ];
-    let mut best = "edge_e";
-    let mut best_dot = f64::MIN;
-    for (name, vx, vz) in dirs {
-        let len = (ax * vx + az * vz).sqrt();
-        if len < 1e-6 {
-            continue;
-        }
-        let dot = (ax * vx + az * vz) / len;
-        if dot > best_dot {
-            best_dot = dot;
-            best = name;
+/// Произвольная форма сечения: пятно клеток, выращенное от центра.
+///
+/// Форму массива задаёт не блок, а набор блоков, поэтому сечение должно
+/// быть неровным — иначе структура выглядит как ровная башня.
+fn footprint(seed: u64, area: i32) -> Vec<(i32, i32)> {
+    let mut cells: Vec<(i32, i32)> = vec![(0, 0)];
+    let mut state = seed | 1;
+    while (cells.len() as i32) < area {
+        // Случайная клетка из уже занятых и соседняя свободная.
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let idx = ((state >> 17) % cells.len() as u64) as usize;
+        let (x, z) = cells[idx];
+        let dir = ((state >> 33) % 4) as usize;
+        let d = [(1, 0), (-1, 0), (0, 1), (0, -1)][dir];
+        let next = (x + d.0, z + d.1);
+        if !cells.contains(&next) {
+            cells.push(next);
         }
     }
-    best
+    cells
 }
 
+/// Направление грани для клетки на границе шестиугольника.
 /// Строит очередной слой шпиля.
 /// Ставит один блок шпиля. Возвращает true, если блок занял место.
 fn build_spire_block(
@@ -675,22 +659,12 @@ fn build_spire_block(
     let oy = spire.ground + layer as i32;
     let pos = [ox + cx, oy, oz + cz];
 
-    let top = layer + 1 >= spire.height;
-    let style = if top {
+    // Блок массива — целый куб; кристаллический гребень только на вершине.
+    let _ = cells;
+    let style = if layer + 1 >= spire.height {
         "tip"
     } else {
-        let mut edge = false;
-        for (dx, dz) in [(1, 0), (-1, 0), (1, -1), (0, -1), (0, 1), (1, 1)] {
-            if !cells.contains(&(cx + dx, cz + dz)) {
-                edge = true;
-                break;
-            }
-        }
-        if edge {
-            edge_style(cx, cz)
-        } else {
-            "core"
-        }
+        "core"
     };
     if !is_block(game, pos, COLUMN) {
         // Сквозь камень массив не растёт, а кристаллы поля поглощает.
@@ -745,24 +719,18 @@ fn maybe_spire(centre: [i32; 3], game: &Game<'_>) {
     let pick = (seed % field.len() as u64) as usize;
     let origin = field[pick];
 
-    // Сечение: ромб радиусом 1–2 и вытянутость 0–3. Площадь сечения
-    // получается от 5 до 23 клеток.
-    let radius = 1 + (seed % 2) as i32;
-    let stretch = ((seed >> 12) % 4) as i32;
-    let along_x = (seed >> 3) % 2 == 0;
-    // Наклон: восемь направлений, чтобы у крупных структур было
-    // несколько разных наклонов.
-    let lean = match (seed >> 8) % 8 {
+    // Форма сечения произвольная: площадь от 5 до 30 клеток.
+    let area = 5 + ((seed >> 12) % 26) as i32;
+    let cells = footprint(seed ^ 0x77E7, area);
+    // Наклон: по одной координате, в одну из четырёх сторон. Через
+    // сколько слоёв делается сдвиг — от каждого слоя до трёх.
+    let lean = match (seed >> 8) % 4 {
         0 => (1, 0),
-        1 => (1, 1),
+        1 => (-1, 0),
         2 => (0, 1),
-        3 => (-1, 1),
-        4 => (-1, 0),
-        5 => (-1, -1),
-        6 => (0, -1),
-        _ => (1, -1),
+        _ => (0, -1),
     };
-    let area = footprint_area(radius, stretch);
+    let lean_step = 1 + ((seed >> 20) % 3) as u8;
     let height = (4 + area / 4).min(14) as u8;
 
     // Если под кристаллом пусто, массив дотягивается до земли: висять
@@ -775,10 +743,9 @@ fn maybe_spire(centre: [i32; 3], game: &Game<'_>) {
     let spire = Spire {
         base: origin,
         ground,
-        radius,
-        stretch,
-        along_x,
+        cells,
         lean,
+        lean_step,
         height,
         layer: 0,
         cursor: 0,
@@ -788,7 +755,6 @@ fn maybe_spire(centre: [i32; 3], game: &Game<'_>) {
         list.push(spire);
     }
 }
-
 /// Уровень земли под точкой: массив должен стоять на земле, а не висеть.
 fn ground_level(game: &Game<'_>, pos: [i32; 3]) -> i32 {
     let mut level = pos[1];
@@ -796,16 +762,6 @@ fn ground_level(game: &Game<'_>, pos: [i32; 3]) -> i32 {
         level -= 1;
     }
     level
-}
-
-/// Площадь сечения массива в клетках.
-fn footprint_area(radius: i32, stretch: i32) -> i32 {
-    let mut area = 0;
-    for a in -radius..=radius {
-        let b_max = radius - a.abs();
-        area += 2 * (b_max + stretch) + 1;
-    }
-    area
 }
 
 /// Продвигает шпили: каждый слой ждёт полного предыдущего.

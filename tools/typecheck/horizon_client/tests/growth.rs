@@ -420,3 +420,55 @@ fn массив_стоит_на_земле_а_не_висит_в_воздухе(
         );
     }
 }
+
+#[test]
+fn верхние_слои_съезжают_по_одной_координате() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        for dx in -9..=9 {
+            for dz in -9..=9 {
+                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                if (dx + dz) % 2 == 0 && dx.abs() <= 4 && dz.abs() <= 4 {
+                    blocks.push(([dx, 1, dz], "tiberium:crystal"));
+                }
+            }
+        }
+    }
+    with_timeout(|| run(20000));
+    let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut levels: std::collections::BTreeMap<i32, Vec<[i32; 3]>> = Default::default();
+    for (pos, name) in blocks.iter() {
+        if *name == "tiberium:column" {
+            levels.entry(pos[1]).or_default().push(*pos);
+        }
+    }
+    assert!(levels.len() >= 3, "массив вырос меньше чем на три слоя");
+    let mut prev: Option<((i32, i32), i32)> = None;
+    for (level, cells) in levels.iter() {
+        // Площадь сечения — от 5 до 30 клеток.
+        assert!(
+            (5..=30).contains(&cells.len()),
+            "в сечении {} клеток, а должно быть от 5 до 30",
+            cells.len()
+        );
+        let min_x = cells.iter().map(|p| p[0]).min().unwrap();
+        let min_z = cells.iter().map(|p| p[2]).min().unwrap();
+        if let Some((prev_min, prev_level)) = prev {
+            assert_eq!(prev_level + 1, *level, "пропущен слой");
+            let dx = min_x - prev_min.0;
+            let dz = min_z - prev_min.1;
+            // Сдвиг — только по одной координате и не больше клетки.
+            assert!(
+                (dx == 0 || dz == 0) && dx.abs() <= 1 && dz.abs() <= 1,
+                "слой {} съехал сразу по двум координатам: dx={}, dz={}",
+                level,
+                dx,
+                dz
+            );
+        }
+        prev = Some(((min_x, min_z), *level));
+    }
+}

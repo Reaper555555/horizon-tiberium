@@ -349,65 +349,31 @@ COLUMN_INSET = {
 INSET = 3  # px
 
 
-# Шестигранная колонна: пересечение двух прямоугольников. Боковые стороны
-# уходят за границы блока на 2 px — тогда соседние колонны смыкаются
-# вплотную и сквозь массив не видно мира.
-HEX_A = (-2.0, 5.0, 18.0, 11.0)
-HEX_B = (5.0, -2.0, 11.0, 18.0)
-
-
-def hex_prism(angle=None, origin=(8.0, 0.0, 8.0)):
-    """Две скрещённые коробки — шестигранная колонна."""
-    ax1, az1, ax2, az2 = HEX_A
-    bx1, bz1, bx2, bz2 = HEX_B
-    return [
-        element(ax1, 0, az1, ax2, 16, az2, ("y", angle) if angle else None,
-                "#column", list(origin)),
-        element(bx1, 0, bz1, bx2, 16, bz2, ("y", angle) if angle else None,
-                "#column", list(origin)),
-    ]
-
-
-# Сдвиг края массива: 22.5° на сторону света. Шесть вариантов — по числу
-# направлений, в которые смотрит край.
-EDGE_TILT = {
-    "edge_e": 22.5,
-    "edge_se": 45.0,
-    "edge_sw": 67.5,
-    "edge_w": 90.0,
-    "edge_nw": 112.5,
-    "edge_ne": 135.0,
-}
-
-
 def column_model(style):
     """Блок крупной структуры.
 
-    Каждый блок массива — шестигранная колонна: два скрещённых прямоугольника.
-    Так массив читается как связанные между собой колонны, а не как кубы.
-    Боковые блоки повёрнуты: край выходит скошенным, а не ступенькой, и
-    повёрнутые колонны смыкаются с соседями без зазоров.
+    Блок массива — целый куб: кубы смыкаются вплотную, без зазоров и без
+    прозрачных дыр, а форма всей структуры получается произвольной — её
+    задаёт не блок, а набор блоков. Только на вершине куб дополнен
+    кристаллическим гребнем.
     """
-    if style == "core":
-        elements = hex_prism()
-    else:
-        elements = hex_prism(EDGE_TILT.get(style))
-        if style == "tip":
-            # Кромка вершины: кристаллический гребень поверх колонны.
-            shards = [
-                (5.0, 6.0, 2.6, 15.0, "z", 9.0),
-                (10.5, 7.5, 2.2, 16.0, "z", -11.0),
-                (8.0, 11.0, 2.0, 13.0, "x", 8.0),
-            ]
-            for dx, dz, half, height, axis, angle in shards:
-                cx = min(max(dx, 4.0), 12.0)
-                cz = min(max(dz, 4.0), 12.0)
-                elements.append(
-                    element(
-                        cx - half, 0, cz - half, cx + half, height, cz + half,
-                        (axis, angle), "#column", [cx, 0, cz],
-                    )
+    elements = [element(0, 0, 0, 16, 16, 16, None, "#column")]
+    if style == "tip":
+        # Кромка вершины: кристаллический гребень поверх куба.
+        shards = [
+            (5.0, 6.0, 2.6, 15.0, "z", 9.0),
+            (10.5, 7.5, 2.2, 16.0, "z", -11.0),
+            (8.0, 11.0, 2.0, 13.0, "x", 8.0),
+        ]
+        for dx, dz, half, height, axis, angle in shards:
+            cx = min(max(dx, 4.0), 12.0)
+            cz = min(max(dz, 4.0), 12.0)
+            elements.append(
+                element(
+                    cx - half, 0, cz - half, cx + half, height, cz + half,
+                    (axis, angle), "#column", [cx, 0, cz],
                 )
+            )
     tex = f"{NS}:block/crystal"
     return {
         "ambientocclusion": False,
