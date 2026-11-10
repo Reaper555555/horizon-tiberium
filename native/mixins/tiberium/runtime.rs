@@ -16,7 +16,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use crate::game::Game;
+use crate::game::{Game, GameLevel};
 use crate::text::Text;
 use horizon_client::items::ItemStack;
 use horizon_client::mod_api::NativeServerPlayer;
@@ -107,6 +107,9 @@ static ARMOR: OnceLock<Mutex<HashMap<u128, [bool; 4]>>> = OnceLock::new();
 static PICKED: OnceLock<Mutex<Vec<(u128, u64)>>> = OnceLock::new();
 static DENSITY: OnceLock<Mutex<HashMap<(i32, i32), (f32, u64)>>> = OnceLock::new();
 static SERVER_TICKS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Молнии ионного шторма: позиция и номер тика. Ими пользуется хук
+/// block_ignite, который висит на уровне и не видит игрового контекста.
+static STRIKES: OnceLock<Mutex<Vec<([i32; 3], u64)>>> = OnceLock::new();
 
 fn sites() -> &'static Mutex<Vec<Site>> {
     SITES.get_or_init(|| Mutex::new(Vec::new()))
@@ -125,6 +128,22 @@ fn picked() -> &'static Mutex<Vec<(u128, u64)>> {
 }
 fn density_cache() -> &'static Mutex<HashMap<(i32, i32), (f32, u64)>> {
     DENSITY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+fn strikes() -> &'static Mutex<Vec<([i32; 3], u64)>> {
+    STRIKES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Рядом ли с этой точкой удар молнии шторма.
+fn strike_near(at: [i32; 3]) -> bool {
+    let Ok(list) = strikes().lock() else {
+        return false;
+    };
+    list.iter().any(|(p, _)| {
+        let dx = (p[0] - at[0]).abs();
+        let dy = (p[1] - at[1]).abs();
+        let dz = (p[2] - at[2]).abs();
+        dx <= 12 && dz <= 12 && dy <= 16
+    })
 }
 
 // ------------------------------------------------------------------ утилиты ---
@@ -814,6 +833,10 @@ pub fn tick(game: &mut Game<'_>) {
         return; // только серверный поток
     }
     let counter = SERVER_TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if let Ok(mut list) = strikes().lock() {
+        // Держим две секунды: этого хватает, чтобы погасить поджог от удара.
+        list.retain(|(_, t)| counter.saturating_sub(*t) < 40);
+    }
     if counter % cfg::GROW_INTERVAL != 0 {
         return; // раз в секунду: обход блоков дорог
     }
@@ -854,6 +877,9 @@ pub fn tick(game: &mut Game<'_>) {
             let lz = centre[2] + ((hash3(centre[2], centre[1], centre[0], now) % 7) as i32) - 3;
             let cmd = format!("summon lightning_bolt {} {} {}", lx, centre[1] + 2, lz);
             let _ = game.native_run_command(&cmd);
+            if let Ok(mut list) = strikes().lock() {
+                list.push(([lx, centre[1] + 2, lz], counter));
+            }
         }
     }
 
@@ -1020,18 +1046,21 @@ pub fn camera_shake(game: &Game<'_>, partial: f32, shake: &mut horizon_client::m
 
 /// Молния не должна поджигать землю в зоне тиберия.
 pub fn block_ignite(
-    game: &Game<'_>,
+    _game: &GameLevel<'_>,
     _dimension: horizon_world::level::Dimension,
     _player: Option<u128>,
     pos: horizon_core::position::BlockPos,
-    _cause: &str,
+    cause: &str,
     cancel: &mut bool,
 ) {
-    if !game.native_on(ID) {
+    // Хук висит на уровне (GameLevel), а не на игровом контексте, поэтому
+    // мира здесь не видно: решение принимается по списку молний шторма,
+    // который ведёт серверный тик.
+    if cause != "lightning" {
         return;
     }
     let at = [pos.x, pos.y, pos.z];
-    if storm_at(game, at) > 0.15 {
+    if strike_near(at) {
         *cancel = true;
     }
 }
