@@ -111,20 +111,21 @@ EDGE_DIRS = {
 }
 
 
-def hex_disc(radius):
-    """Клетки шестигранного диска (odd-r): основание массива."""
+def footprint(radius, stretch, along_x=True):
+    """Сечение массива: ромб с вытянутыми концами."""
     cells = []
-    for x in range(-radius, radius + 1):
-        for z in range(-radius, radius + 1):
-            if (abs(x) + abs(z) + abs(x + z)) // 2 <= radius:
-                cells.append((x, z))
+    for a in range(-radius, radius + 1):
+        b_max = radius - abs(a)
+        for b in range(-(b_max + stretch), b_max + stretch + 1):
+            cells.append((a, b) if along_x else (b, a))
     return cells
 
 
-def column_model_for(x, z, radius):
-    """Внутренние клетки — сплошной блок, крайние — срезанные."""
+def column_model_for(x, z, cells):
+    """Внутренние клетки — ровная колонна, крайние — повёрнутые."""
+    inside = set(cells)
     for name, (dx, dz) in EDGE_DIRS.items():
-        if (abs(x + dx) + abs(z + dz) + abs(x + z + dx + dz)) // 2 > radius:
+        if (x + dx, z + dz) not in inside:
             return "column_edge_%s" % name
     return "column_core"
 
@@ -169,29 +170,49 @@ def render_scene(scene, ax):
 def spire_scene():
     """Массив, каким он вырастает в игре: ровные слои одинакового сечения."""
     scene = []
-    radius = 3
-    cells = hex_disc(radius)
+    radius = 2
+    stretch = 2
+    cells = footprint(radius, stretch)
     for layer in range(4):
         by_model = {}
         for x, z in cells:
-            by_model.setdefault(column_model_for(x, z, radius), []).append((x, layer, z))
+            by_model.setdefault(column_model_for(x, z, cells), []).append((x, layer, z))
         for name, positions in by_model.items():
             scene.append((name, positions))
     scene.append(("column_tip", [(0, 4, 0)]))
     return scene
 
 
+def wall_scene():
+    """Настенные кристаллы: прижаты к стене, как факелы."""
+    scene = []
+    for style, x, z in (
+        ("wall_e", 0, 0),
+        ("wall_w", 2, 0),
+        ("wall_n", 4, 0),
+        ("wall_s", 6, 0),
+        ("wall_up", 8, 0),
+    ):
+        name = f"crystal_shaft_{style}_p6_r0"
+        scene.append((name, [(x, 0, z)]))
+    return scene
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("models", nargs="*", default=None)
-    ap.add_argument("--scene", choices=("spire",), default=None)
+    ap.add_argument("--scene", choices=("spire", "wall"), default=None)
     ap.add_argument("-o", "--out", default=os.path.join(HERE, "..", "dist", "preview.png"))
     args = ap.parse_args()
 
-    if args.scene == "spire":
+    if args.scene in ("spire", "wall"):
         fig, ax = plt.subplots(figsize=(6.4, 6.4))
-        render_scene(spire_scene(), ax)
-        ax.set_title("крупная структура: ровные слои одинакового сечения", fontsize=9)
+        if args.scene == "spire":
+            render_scene(spire_scene(), ax)
+            ax.set_title("крупная структура: связанные шестигранные колонны", fontsize=9)
+        else:
+            render_scene(wall_scene(), ax)
+            ax.set_title("настенные кристаллы: прижаты к стене", fontsize=9)
         fig.tight_layout()
         out = os.path.abspath(args.out)
         os.makedirs(os.path.dirname(out), exist_ok=True)

@@ -73,15 +73,19 @@ mod cfg {
     pub const FALL_CHANCE: u64 = 8;
     /// Сколько кристаллов нужно, чтобы появился шпиль: сначала должно
     /// разрастись поле, и только потом появляются крупные структуры.
-    pub const SPIRE_SITES: usize = 32;
+    /// Сколько мелких кристаллов должно быть рядом, чтобы вырос массив.
+    pub const SPIRE_SITES: usize = 25;
     /// Сколько блоков шпиля ставится за один тик: поблочно, не сразу слоем.
     /// Сколько блоков массива ставится за один шаг роста: по одному.
     /// Слой заполняется целиком, и только потом начинается следующий.
     pub const SPIRE_BLOCKS_PER_TICK: usize = 1;
     /// Минимальная дистанция между шпилями.
-    pub const SPIRE_GAP: i32 = 22;
+    /// Рядом не должно быть второй такой же структуры.
+    pub const SPIRE_GAP: i32 = 16;
     /// Тиков между проходами роста шпиля.
-    pub const SPIRE_LAYER_TICKS: u64 = 20;
+    /// Шаг роста массива: один блок за 2 секунды. Быстрее массив
+    /// выглядит готовым, а поле не успевает расползтись вширь.
+    pub const SPIRE_LAYER_TICKS: u64 = 40;
     /// Порог плотности тиберия для заражения.
     pub const POISON_DENSITY: f32 = 0.06;
     /// Длительность отравления, тики (1 тик = 1/20 с).
@@ -106,17 +110,23 @@ struct Site {
 /// Крупная шестигранная структура.
 #[derive(Clone)]
 struct Spire {
-    /// Точка, из которой вырос шпиль: это существующий кристалл поля.
+    /// Точка, из которой вырос массив: это существующий кристалл поля.
     base: [i32; 3],
-    radius: u8,
-    /// Насколько гребень вытянут вдоль наклона.
+    /// Уровень земли под массивом. Если под кристаллом пусто, массив
+    /// дотягивается до земли, чтобы не висел в воздухе.
+    ground: i32,
+    /// Радиус сечения (ромб) и вытянутость гребня.
+    radius: i32,
     stretch: i32,
+    /// Вдоль какой оси вытянут гребень.
+    along_x: bool,
+    /// Направление наклона: верхние слои смещаются в эту сторону.
+    lean: (i32, i32),
     height: u8,
     /// Текущий слой.
     layer: u8,
     /// Сколько клеток текущего слоя уже поставлено.
     cursor: usize,
-    lean: (i32, i32),
 }
 
 static SITES: OnceLock<Mutex<Vec<Site>>> = OnceLock::new();
@@ -493,7 +503,7 @@ fn spread(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
         let seed = hash3(above[0], above[1], above[2], 0x5EED);
         let style = STYLES[(seed % STYLES.len() as u64) as usize];
         let rotation = ROTATIONS[((seed >> 8) % ROTATIONS.len() as u64) as usize];
-        if !place_crystal(game, ids, dimension, above, style, rotation, 0, "tip") {
+        if !place_crystal(game, ids, dimension, above, style, rotation, 0, "shaft") {
             continue;
         }
         {
@@ -516,49 +526,40 @@ fn spread(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
 
 /// Кристалл на стене или потолке: растёт из боковой грани и всегда повёрнут.
 fn wall_growth(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
-    // Шесть направлений: четыре в стороны и два по вертикали.
-    let dirs: [[i32; 3]; 6] = [
-        [1, 0, 0],
-        [-1, 0, 0],
-        [0, 0, 1],
-        [0, 0, -1],
-        [0, 1, 0],
-        [0, -1, 0],
+    // Четыре стены и потолок. Кристалл вырастает в соседнюю клетку и
+    // прижимается к стене — как факел, а не как блок, выросший из воздуха.
+    let dirs: [([i32; 3], &str); 5] = [
+        ([1, 0, 0], "wall_e"),
+        ([-1, 0, 0], "wall_w"),
+        ([0, 0, 1], "wall_s"),
+        ([0, 0, -1], "wall_n"),
+        ([0, 1, 0], "wall_up"),
     ];
-    let pick = (hash3(site.base[0], site.base[1], site.base[2], site.tries as u64 ^ 0x77) % 6) as usize;
-    let d = dirs[pick];
+    let pick =
+        (hash3(site.base[0], site.base[1], site.base[2], site.tries as u64 ^ 0x77)
+            % dirs.len() as u64) as usize;
+    let (d, style) = dirs[pick];
     let level = site.base[1] + site.height as i32 - 1;
     let spot = [site.base[0] + d[0], level + d[1], site.base[2] + d[2]];
     if !is_air(game, spot) {
         return;
     }
-    // Опора: сбоку или сверху должен быть камень, иначе кристалл падает.
-    let support = if d[1] == 0 {
-        [spot[0] - d[0], spot[1], spot[2] - d[2]]
-    } else {
-        [spot[0], spot[1] - d[1], spot[2]]
-    };
-    if !is_solid(game, support) {
+    // Стена: следующая клетка в ту же сторону. Кристалл должен к ней
+    // примыкать, иначе он просто висит в воздухе.
+    let wall = [spot[0] + d[0], spot[1] + d[1], spot[2] + d[2]];
+    if !is_solid(game, wall) {
         return;
     }
-    // Поворот по грани, на которой вырос кристалл: соседние не выглядят одинаково.
-    let rotation = match (d[0], d[2]) {
-        (1, 0) => "r0",
-        (-1, 0) => "r2",
-        (0, 1) => "r1",
-        (0, -1) => "r3",
-        _ => "r0",
-    };
     let seed = hash3(spot[0], spot[1], spot[2], 0xBEEF);
-    let style = STYLES[(seed % STYLES.len() as u64) as usize];
-    if place_crystal(game, ids, dimension, spot, style, rotation, 0, "tip") {
+    // Поворот у настенного кристала не нужен: сторона задана стилем.
+    if place_crystal(game, ids, dimension, spot, style, "r0", 0, "shaft") {
         {
             let mut list = pending_sites().lock().unwrap_or_else(|e| e.into_inner());
             if !list.iter().any(|s| s.base == spot) {
                 list.push(Site {
                     base: spot,
                     style,
-                    rotation,
+                    rotation: "r0",
                     stage: 0,
                     height: 1,
                     seed,
@@ -596,34 +597,29 @@ fn dry_soil(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
 /// Дальше слой расширяется, и структура получает гребень, вытянутый вдоль
 /// наклона. Клетки идут подряд без зазоров: крайние блоки срезаются
 /// по углам, и массив читается как шестиугольники, а не как кубы.
-fn ridge_cells(radius: u8, stretch: i32, along_x: bool) -> Vec<(i32, i32)> {
-    let r = radius as i32;
-    let mut out = Vec::new();
-    for perp in -r..=r {
-        // Длина среза сужается к краям, чтобы гребень был с закруглёнными торцами.
-        let half = r + stretch - perp.abs() / 2;
-        for along in -half..=half {
-            if along_x {
-                out.push((along, perp));
+/// Клетки конкретного слоя: от одной точки у основания до широкого гребня.
+fn layer_cells(spire: &Spire, layer: u8) -> Vec<(i32, i32)> {
+    // Сечение одинаковое для всех слоёв: массив не сужается вверх.
+    // Форма — ромб с вытянутыми концами: с торца он сходится в угол,
+    // и сверху массив читается как связанные между собой колонны.
+    let mut cells = Vec::new();
+    for a in -spire.radius..=spire.radius {
+        let b_max = spire.radius - a.abs();
+        for b in -(b_max + spire.stretch)..=(b_max + spire.stretch) {
+            if spire.along_x {
+                cells.push((a, b));
             } else {
-                out.push((perp, along));
+                cells.push((b, a));
             }
         }
     }
-    out
-}
-
-/// Клетки конкретного слоя: от одной точки у основания до широкого гребня.
-fn layer_cells(spire: &Spire, _layer: u8) -> Vec<(i32, i32)> {
-    // Все слои одинаковые: массив не сужается вверх, а растёт ровной
-    // шестигранной колонной. Поэтому блок верхнего слоя всегда стоит на
-    // блоке нижнего и ничего не висит в воздухе.
-    let radius = spire.radius as i32;
-    if radius <= 0 {
-        return vec![(0, 0)];
-    }
-    // Гребень вытянут вдоль наклона и сужается к краям.
-    let mut cells = ridge_cells(radius as u8, spire.stretch, spire.lean.1 == 0);
+    // Верхние слои смещаются в сторону наклона: массив заваливается.
+    let shift = (layer as i32 / 3) * spire.lean.0;
+    let shift_z = (layer as i32 / 3) * spire.lean.1;
+    cells = cells
+        .into_iter()
+        .map(|(a, b)| (a + shift, b + shift_z))
+        .collect();
     // Порядок от центра наружу: каждый следующий блок касается уже
     // поставленного, иначе крайние блоки слоя висели бы в воздухе.
     cells.sort_by_key(|&(a, b)| (a * a + b * b, a, b));
@@ -673,9 +669,10 @@ fn build_spire_block(
     let (cx, cz) = cell;
     let ox = spire.base[0];
     let oz = spire.base[2];
-    // Основание массива стоит на земле рядом с кристаллом-опорой, дальше
-    // каждый слой ложится на предыдущий.
-    let oy = spire.base[1] + layer as i32;
+    // Основание массива стоит на земле (под опорным кристаллом может быть
+    // пусто — тогда массив дотягивается до земли), дальше каждый слой
+    // ложится на предыдущий.
+    let oy = spire.ground + layer as i32;
     let pos = [ox + cx, oy, oz + cz];
 
     let top = layer + 1 >= spire.height;
@@ -713,7 +710,7 @@ fn build_spire_block(
 
 /// Пытается поднять новый шпиль рядом с полем тиберия.
 /// Пытается вырасти шпиль из кристалла в достаточно широком поле.
-fn maybe_spire(centre: [i32; 3]) {
+fn maybe_spire(centre: [i32; 3], game: &Game<'_>) {
     // Поле должно быть широким: сначала тиберия занимает землю, и только
     // потом в нём появляются крупные структуры.
     let mut field: Vec<[i32; 3]> = Vec::new();
@@ -727,15 +724,13 @@ fn maybe_spire(centre: [i32; 3]) {
             }
         }
     }
+    // Мелких кристаллов должно быть достаточно много.
     if field.len() < cfg::SPIRE_SITES {
         return;
     }
     {
-        let list = match spires().lock() {
-            Ok(l) => l,
-            Err(_) => return,
-        };
-        // Не строим шпиль рядом с уже существующим.
+        let list = spires().lock().unwrap_or_else(|e| e.into_inner());
+        // Рядом не должно быть второй такой же структуры.
         for s in list.iter() {
             if (s.base[0] - centre[0]).abs() < cfg::SPIRE_GAP
                 && (s.base[2] - centre[2]).abs() < cfg::SPIRE_GAP
@@ -744,36 +739,73 @@ fn maybe_spire(centre: [i32; 3]) {
             }
         }
     }
-    // Опора шпиля — один из кристаллов поля: структура растёт из него,
+    // Опора массива — один из кристаллов поля: структура растёт из него,
     // а не появляется из воздуха.
     let seed = hash3(centre[0], centre[1], centre[2], 0x5911E);
     let pick = (seed % field.len() as u64) as usize;
     let origin = field[pick];
 
-    let radius = 2 + (seed % 3) as u8;
-    let stretch = 2 + ((seed >> 12) % 5) as i32;
-    // Вершина сужается до одного блока: выше массив превратился бы в иглу.
-    // Колонна одинакового сечения, поэтому высоты можно больше.
-    let height = radius + 4 + ((seed >> 4) % 5) as u8;
-    let lean = match (seed >> 8) % 4 {
+    // Сечение: ромб радиусом 1–2 и вытянутость 0–3. Площадь сечения
+    // получается от 5 до 23 клеток.
+    let radius = 1 + (seed % 2) as i32;
+    let stretch = ((seed >> 12) % 4) as i32;
+    let along_x = (seed >> 3) % 2 == 0;
+    // Наклон: восемь направлений, чтобы у крупных структур было
+    // несколько разных наклонов.
+    let lean = match (seed >> 8) % 8 {
         0 => (1, 0),
-        1 => (-1, 0),
+        1 => (1, 1),
         2 => (0, 1),
-        _ => (0, -1),
+        3 => (-1, 1),
+        4 => (-1, 0),
+        5 => (-1, -1),
+        6 => (0, -1),
+        _ => (1, -1),
     };
+    let area = footprint_area(radius, stretch);
+    let height = (4 + area / 4).min(14) as u8;
+
+    // Если под кристаллом пусто, массив дотягивается до земли: висять
+    // в воздухе некрасиво, и выглядит это ошибкой.
+    let ground = ground_level(game, origin);
+    // Высота при этом сохраняется: массив не становится короче, он
+    // просто стоит ниже.
+    let height = height + (origin[1] - ground).max(0) as u8;
+
     let spire = Spire {
         base: origin,
+        ground,
         radius,
         stretch,
+        along_x,
+        lean,
         height,
         layer: 0,
         cursor: 0,
-        lean,
     };
     {
         let mut list = spires().lock().unwrap_or_else(|e| e.into_inner());
         list.push(spire);
     }
+}
+
+/// Уровень земли под точкой: массив должен стоять на земле, а не висеть.
+fn ground_level(game: &Game<'_>, pos: [i32; 3]) -> i32 {
+    let mut level = pos[1];
+    while level > pos[1] - 8 && !is_solid(game, [pos[0], level - 1, pos[2]]) {
+        level -= 1;
+    }
+    level
+}
+
+/// Площадь сечения массива в клетках.
+fn footprint_area(radius: i32, stretch: i32) -> i32 {
+    let mut area = 0;
+    for a in -radius..=radius {
+        let b_max = radius - a.abs();
+        area += 2 * (b_max + stretch) + 1;
+    }
+    area
 }
 
 /// Продвигает шпили: каждый слой ждёт полного предыдущего.
@@ -956,7 +988,7 @@ pub fn player_tick(game: &mut Game<'_>) {
     // Шпили.
     if tick % cfg::SPIRE_LAYER_TICKS == 0 {
         advance_spires(game, &ids, &dimension);
-        maybe_spire(centre);
+        maybe_spire(centre, game);
     }
 }
 
