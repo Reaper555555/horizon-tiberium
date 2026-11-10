@@ -1,0 +1,10 @@
+{
+  "template": "minecraft:dirt",
+  "properties": {
+    "hardness": 0.6,
+    "explosion_resistance": 0.5,
+    "light": 1,
+    "sounds": "minecraft:rooted_dirt"
+  },
+  "item": false
+}

@@ -1,0 +1,10 @@
+{
+  "template": "minecraft:moss_carpet",
+  "properties": {
+    "hardness": 0.2,
+    "explosion_resistance": 0.2,
+    "light": 1,
+    "sounds": "minecraft:moss_carpet"
+  },
+  "item": false
+}

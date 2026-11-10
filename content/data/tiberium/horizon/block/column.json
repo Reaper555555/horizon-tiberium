@@ -1,0 +1,24 @@
+{
+  "template": "minecraft:obsidian",
+  "properties": {
+    "hardness": 50.0,
+    "explosion_resistance": 6.0,
+    "light": 4,
+    "sounds": "minecraft:amethyst_block",
+    "requires_tool": true
+  },
+  "state_properties": {
+    "style": {
+      "type": "enum",
+      "values": [
+        "core",
+        "edge_e", "edge_w", "edge_ne", "edge_nw", "edge_se", "edge_sw",
+        "tip"
+      ]
+    }
+  },
+  "default_state": {
+    "style": "core"
+  },
+  "item": true
+}

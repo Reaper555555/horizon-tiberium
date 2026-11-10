@@ -1,0 +1,19 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    "CS"
+  ],
+  "key": {
+    "C": {
+      "item": "tiberium:empty_capsule"
+    },
+    "S": {
+      "item": "tiberium:raw_shard"
+    }
+  },
+  "result": {
+    "id": "tiberium:sealed_capsule",
+    "count": 1
+  }
+}

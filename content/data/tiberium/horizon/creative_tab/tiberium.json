@@ -1,0 +1,18 @@
+{
+  "title": "itemGroup.tiberium.main",
+  "icon": "tiberium:raw_shard",
+  "items": [
+    "tiberium:crystal",
+    "tiberium:column",
+    "tiberium:sonic_pylon",
+    "tiberium:raw_shard",
+    "tiberium:empty_capsule",
+    "tiberium:sealed_capsule",
+    "tiberium:sonic_disruptor",
+    "tiberium:sonic_charge",
+    "tiberium:bio_helmet",
+    "tiberium:bio_chestplate",
+    "tiberium:bio_leggings",
+    "tiberium:bio_boots"
+  ]
+}

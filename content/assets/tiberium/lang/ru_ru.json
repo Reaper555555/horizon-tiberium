@@ -1,0 +1,17 @@
+{
+  "itemGroup.tiberium.main": "Комплект тибериевого поля",
+  "block.tiberium.crystal": "Кристалл тиберия",
+  "block.tiberium.tainted_soil": "Почва, заражённая тиберием",
+  "block.tiberium.sonic_pylon": "Ультразвуковой очищающий пилон",
+  "item.tiberium.raw_shard": "Необработанный осколок тиберия",
+  "item.tiberium.empty_capsule": "Пустая защитная капсула",
+  "item.tiberium.sealed_capsule": "Герметичная капсула с тиберием",
+  "item.tiberium.sonic_disruptor": "Переносной ультразвуковой излучатель",
+  "item.tiberium.sonic_charge": "Ультразвуковой заряд",
+  "item.tiberium.bio_helmet": "Герметичный биошлем",
+  "item.tiberium.bio_chestplate": "Герметичный биокираc",
+  "item.tiberium.bio_leggings": "Герметичные биоштаны",
+  "item.tiberium.bio_boots": "Герметичные биоботинки",
+  "block.tiberium.root_trace": "След корня тиберия",
+  "effect.tiberium.infection": "Заражение тиберием"
+}

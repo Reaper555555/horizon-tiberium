@@ -1,7 +1,7 @@
 id = "tiberium"
 name = "Tiberium"
-version = "0.1.5"
-description = "Tiberium: slow crystalline growth, contamination, bio-protection and sonic cleansing. Harvest crystals with a pickaxe, then seal the shards in capsules via crafting."
+version = "0.2.0"
+description = "Tiberium: crystalline growth that drains the land, contaminates the soil, raises hexagonal spires and calls ion storms. Harvest crystals with an iron pickaxe, seal the shards in capsules."
 authors = ["Horizon Tiberium Project"]
 api = "0.2"
 side = "both"
