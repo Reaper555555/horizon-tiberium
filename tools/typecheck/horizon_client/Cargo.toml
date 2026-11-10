@@ -1,0 +1,8 @@
+[package]
+name = "horizon-client"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+horizon-core = { path = "../horizon_core" }
+horizon-world = { path = "../horizon_world" }

@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["horizon_core", "horizon_world", "horizon_client"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
