@@ -131,17 +131,23 @@ def column_model_for(x, z, radius):
 
 def render_scene(scene, ax):
     """Рисует блоки сцены (модель -> список позиций) в изометрии."""
-    all_polys = []
+    # Блоки рисуются от дальних к ближним, а в пределах высоты — снизу
+    # вверх: иначе верхние блоки закрывают нижние.
+    items = []
     for model_name, positions in scene:
+        for px, py, pz in positions:
+            items.append((-(px + pz), py, model_name, (px, py, pz)))
+    items.sort()
+    all_polys = []
+    for _, _, model_name, (px, py, pz) in items:
         with open(os.path.join(MODELS, model_name + ".json"), encoding="utf-8") as fh:
             model = json.load(fh)
-        for px, py, pz in positions:
-            polys = model_polygons(model)
-            # Модели в координатах 0..16, смещение блока — в тех же единицах.
-            ox, oy = px * 16.0, py * 16.0
-            for poly, shade in polys:
-                moved = [((p[0] + ox), (p[1] + oy)) for p in poly]
-                all_polys.append((moved, shade))
+        polys = model_polygons(model)
+        # Модели в координатах 0..16, смещение блока — в тех же единицах.
+        ox, oy = px * 16.0, py * 16.0
+        for poly, shade in polys:
+            moved = [((p[0] + ox), (p[1] + oy)) for p in poly]
+            all_polys.append((moved, shade))
     all_polys.sort(key=lambda item: -sum(p[0] for p in item[0]))
     collection = PolyCollection(
         [poly for poly, _ in all_polys],

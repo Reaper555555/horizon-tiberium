@@ -274,3 +274,39 @@ fn массив_не_сужается_вверх_и_слои_заполняют�
         );
     }
 }
+
+#[test]
+fn кристалл_не_растёт_вторым_блоком() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        for dx in -6..=6 {
+            for dz in -6..=6 {
+                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+            }
+        }
+        blocks.push(([0, 1, 0], "tiberium:crystal"));
+    }
+    with_timeout(|| run(6000));
+    let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    let crystals: Vec<[i32; 3]> = blocks
+        .iter()
+        .filter(|(_, name)| *name == "tiberium:crystal")
+        .map(|(p, _)| *p)
+        .collect();
+    assert!(!crystals.is_empty(), "кристаллов не осталось");
+    for pos in crystals.iter() {
+        let above = [pos[0], pos[1] + 1, pos[2]];
+        let stacked = blocks
+            .iter()
+            .any(|(p, name)| *p == above && *name == "tiberium:crystal");
+        assert!(
+            !stacked,
+            "на кристалле {:?} вырос второй блок {:?}",
+            pos,
+            above
+        );
+    }
+}
