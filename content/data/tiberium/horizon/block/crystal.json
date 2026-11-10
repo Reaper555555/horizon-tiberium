@@ -1,0 +1,78 @@
+{
+  "template": "minecraft:glass",
+  "properties": {
+    "hardness": 50.0,
+    "explosion_resistance": 6.0,
+    "light": 5,
+    "sounds": "minecraft:amethyst_block",
+    "requires_tool": true
+  },
+  "state_properties": {
+    "segment": {
+      "type": "enum",
+      "values": ["shaft", "tip"]
+    },
+    "style": {
+      "type": "enum",
+      "values": [
+        "a", "axp", "axn", "azp", "azn",
+        "b", "bxp", "bxn", "bzp", "bzn",
+        "c", "cxp", "cxn", "czp", "czn",
+        "j", "jxp", "jxn", "jzp", "jzn"
+      ]
+    },
+    "shift": {
+      "type": "enum",
+      "values": ["p0", "p1", "p2", "p3", "p4", "p5", "p6"]
+    },
+    "rotation": {
+      "type": "enum",
+      "values": ["r0", "r1", "r2", "r3"]
+    }
+  },
+  "default_state": {
+    "segment": "shaft",
+    "style": "a",
+    "shift": "p0",
+    "rotation": "r0"
+  },
+  "shapes": {
+    "properties": ["segment", "shift"],
+    "values": {
+      "shaft,p0": [[6, 0, 6, 10, 1, 10]],
+      "shaft,p1": [[5, 0, 5, 11, 1, 11]],
+      "shaft,p2": [[4, 0, 4, 12, 1, 12]],
+      "shaft,p3": [[3.5, 0, 3.5, 12.5, 1, 12.5]],
+      "shaft,p4": [[3, 0, 3, 13, 1, 13]],
+      "shaft,p5": [[2.5, 0, 2.5, 13.5, 1, 13.5]],
+      "shaft,p6": [[2, 0, 2, 14, 1, 14]],
+      "tip,p0": [[6, 0, 6, 10, 1, 10]],
+      "tip,p1": [[5, 0, 5, 11, 1, 11]],
+      "tip,p2": [[4, 0, 4, 12, 1, 12]],
+      "tip,p3": [[3.5, 0, 3.5, 12.5, 1, 12.5]],
+      "tip,p4": [[3, 0, 3, 13, 1, 13]],
+      "tip,p5": [[2.5, 0, 2.5, 13.5, 1, 13.5]],
+      "tip,p6": [[2, 0, 2, 14, 1, 14]]
+    }
+  },
+  "collision_shapes": {
+    "properties": ["segment", "shift"],
+    "values": {
+      "shaft,p0": [[6, 0, 6, 10, 1, 10]],
+      "shaft,p1": [[5, 0, 5, 11, 1, 11]],
+      "shaft,p2": [[4, 0, 4, 12, 1, 12]],
+      "shaft,p3": [[3.5, 0, 3.5, 12.5, 1, 12.5]],
+      "shaft,p4": [[3, 0, 3, 13, 1, 13]],
+      "shaft,p5": [[2.5, 0, 2.5, 13.5, 1, 13.5]],
+      "shaft,p6": [[2, 0, 2, 14, 1, 14]],
+      "tip,p0": [[6, 0.75, 6, 10, 1, 10]],
+      "tip,p1": [[5, 0.75, 5, 11, 1, 11]],
+      "tip,p2": [[4, 0.75, 4, 12, 1, 12]],
+      "tip,p3": [[3.5, 0.75, 3.5, 12.5, 1, 12.5]],
+      "tip,p4": [[3, 0.75, 3, 13, 1, 13]],
+      "tip,p5": [[2.5, 0.75, 2.5, 13.5, 1, 13.5]],
+      "tip,p6": [[2, 0.75, 2, 14, 1, 14]]
+    }
+  },
+  "item": true
+}
