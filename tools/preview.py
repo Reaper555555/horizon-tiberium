@@ -185,8 +185,9 @@ def spire_scene():
     lean = (1, 0)
     lean_step = 2
     for layer in range(5):
-        shift = (layer // lean_step) * lean[0]
-        shift_z = (layer // lean_step) * lean[1]
+        # Сдвиг ограничен двумя шагами — как в игре.
+        shift = min(layer // lean_step, 2) * lean[0]
+        shift_z = min(layer // lean_step, 2) * lean[1]
         for x, z in cells:
             style = "column_tip" if layer == 4 else "column_core"
             scene.append((style, [(x + shift, layer, z + shift_z)]))
