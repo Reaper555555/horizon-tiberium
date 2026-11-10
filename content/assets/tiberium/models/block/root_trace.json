@@ -1,6 +1,6 @@
 {
   "parent": "minecraft:block/carpet",
   "textures": {
-    "wool": "tiberium:block/tainted_soil"
+    "wool": "tiberium:block/crystal"
   }
 }

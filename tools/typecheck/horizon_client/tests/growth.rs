@@ -42,7 +42,7 @@ fn block_at(pos: [i32; 3]) -> Option<String> {
     let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
     blocks
         .iter()
-        .find(|(p, _)| *p == pos)
+        .find(|(p, _)| *p == pos.as_slice())
         .map(|(_, name)| (*name).to_string())
 }
 
@@ -50,7 +50,7 @@ fn crystals() -> Vec<[i32; 3]> {
     let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
     blocks
         .iter()
-        .filter(|(_, name)| *name == "tiberium:crystal")
+        .filter(|(_, name)| **name == "tiberium:crystal")
         .map(|(p, _)| *p)
         .collect()
 }
@@ -84,8 +84,8 @@ fn кристалл_в_воздухе_падает() {
     set_player();
     {
         let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
-        blocks.push(([0, 0, 0], "minecraft:stone")); // земля
-        blocks.push(([0, 4, 0], "tiberium:crystal")); // кристалл в воздухе
+        blocks.insert([0, 0, 0], "minecraft:stone"); // земля
+        blocks.insert([0, 4, 0], "tiberium:crystal"); // кристалл в воздухе
     }
     with_timeout(|| run(4000));
     assert_ne!(
@@ -107,8 +107,8 @@ fn кристалл_не_растёт_выше_двух_блоков() {
     set_player();
     {
         let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
-        blocks.push(([0, 0, 0], "minecraft:dirt"));
-        blocks.push(([0, 1, 0], "tiberium:crystal"));
+        blocks.insert([0, 0, 0], "minecraft:dirt");
+        blocks.insert([0, 1, 0], "tiberium:crystal");
     }
     with_timeout(|| run(4000));
     let heights: Vec<i32> = crystals()
@@ -135,11 +135,11 @@ fn поле_расползается_вширь() {
     set_player();
     {
         let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
-        blocks.push(([0, 0, 0], "minecraft:dirt"));
-        blocks.push(([0, 1, 0], "tiberium:crystal"));
+        blocks.insert([0, 0, 0], "minecraft:dirt");
+        blocks.insert([0, 1, 0], "tiberium:crystal");
         for dx in -4..=4 {
             for dz in -4..=4 {
-                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
             }
         }
     }
@@ -166,9 +166,9 @@ fn крупная_структура_растёт_из_кристалла_и_н�
         // Земля шире поля кристаллов: массивы выходят за его пределы.
         for dx in -9..=9 {
             for dz in -9..=9 {
-                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
                 if (dx + dz) % 2 == 0 && dx.abs() <= 4 && dz.abs() <= 4 {
-                    blocks.push(([dx, 1, dz], "tiberium:crystal"));
+                    blocks.insert([dx, 1, dz], "tiberium:crystal");
                 }
             }
         }
@@ -179,7 +179,7 @@ fn крупная_структура_растёт_из_кристалла_и_н�
         let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
         blocks
             .iter()
-            .filter(|(_, n)| *n == "tiberium:column")
+            .filter(|(_, n)| **n == "tiberium:column")
             .map(|(p, _)| *p)
             .collect()
     };
@@ -188,7 +188,7 @@ fn крупная_структура_растёт_из_кристалла_и_н�
         let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
         blocks
             .iter()
-            .filter(|(_, n)| *n == "tiberium:column")
+            .filter(|(_, n)| **n == "tiberium:column")
             .map(|(p, _)| *p)
             .collect()
     };
@@ -243,9 +243,9 @@ fn массив_не_сужается_вверх_и_слои_заполняют�
         let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
         for dx in -9..=9 {
             for dz in -9..=9 {
-                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
                 if (dx + dz) % 2 == 0 && dx.abs() <= 4 && dz.abs() <= 4 {
-                    blocks.push(([dx, 1, dz], "tiberium:crystal"));
+                    blocks.insert([dx, 1, dz], "tiberium:crystal");
                 }
             }
         }
@@ -293,16 +293,16 @@ fn кристалл_не_растёт_вторым_блоком() {
         let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
         for dx in -6..=6 {
             for dz in -6..=6 {
-                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
             }
         }
-        blocks.push(([0, 1, 0], "tiberium:crystal"));
+        blocks.insert([0, 1, 0], "tiberium:crystal");
     }
     with_timeout(|| run(6000));
     let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
     let crystals: Vec<[i32; 3]> = blocks
         .iter()
-        .filter(|(_, name)| *name == "tiberium:crystal")
+        .filter(|(_, name)| **name == "tiberium:crystal")
         .map(|(p, _)| *p)
         .collect();
     assert!(!crystals.is_empty(), "кристаллов не осталось");
@@ -329,19 +329,19 @@ fn кристалл_прижимается_к_стене() {
         let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
         for dx in -6..=6 {
             for dz in -6..=6 {
-                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
             }
         }
         // Стена со всех сторон: x = 2 и z = 2.
         for y in 1..=4 {
             for dz in -4..=4 {
-                blocks.push(([2, y, dz], "minecraft:stone"));
+                blocks.insert([2, y, dz], "minecraft:stone");
             }
             for dx in -4..=4 {
-                blocks.push(([dx, y, 2], "minecraft:stone"));
+                blocks.insert([dx, y, 2], "minecraft:stone");
             }
         }
-        blocks.push(([0, 1, 0], "tiberium:crystal"));
+        blocks.insert([0, 1, 0], "tiberium:crystal");
     }
     with_timeout(|| run(4000));
     let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
@@ -392,13 +392,13 @@ fn массив_стоит_на_земле_а_не_висит_в_воздухе(
                 if dx == 0 && dz == 0 {
                     continue;
                 }
-                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
             }
         }
         for dx in -4..=4 {
             for dz in -4..=4 {
                 if (dx + dz) % 2 == 0 {
-                    blocks.push(([dx, 1, dz], "tiberium:crystal"));
+                    blocks.insert([dx, 1, dz], "tiberium:crystal");
                 }
             }
         }
@@ -407,7 +407,7 @@ fn массив_стоит_на_земле_а_не_висит_в_воздухе(
     let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
     let columns: Vec<[i32; 3]> = blocks
         .iter()
-        .filter(|(_, name)| *name == "tiberium:column")
+        .filter(|(_, name)| **name == "tiberium:column")
         .map(|(p, _)| *p)
         .collect();
     assert!(!columns.is_empty(), "массив не вырос");
@@ -430,9 +430,9 @@ fn верхние_слои_съезжают_по_одной_координате
         let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
         for dx in -9..=9 {
             for dz in -9..=9 {
-                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
                 if (dx + dz) % 2 == 0 && dx.abs() <= 4 && dz.abs() <= 4 {
-                    blocks.push(([dx, 1, dz], "tiberium:crystal"));
+                    blocks.insert([dx, 1, dz], "tiberium:crystal");
                 }
             }
         }
@@ -471,4 +471,219 @@ fn верхние_слои_съезжают_по_одной_координате
         }
         prev = Some(((min_x, min_z), *level));
     }
+}
+
+/// Свойство блока, выставленное модом.
+fn prop(pos: [i32; 3], key: &str) -> Option<String> {
+    horizon_client::game::FAKE_PROPS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(&pos)
+        .and_then(|m| m.get(key))
+        .cloned()
+}
+
+#[test]
+fn снег_считается_почвой_и_поле_по_нему_ползёт() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        blocks.insert([0, 0, 0], "minecraft:snow");
+        blocks.insert([0, 1, 0], "tiberium:crystal");
+        for dx in -5..=5 {
+            for dz in -5..=5 {
+                blocks.insert([dx, 0, dz], "minecraft:snow");
+            }
+        }
+    }
+    with_timeout(|| run(3000));
+    let spread = crystals().iter().filter(|p| p[1] == 1).count();
+    assert!(
+        spread >= 5,
+        "по снегу поле не расползлось: кристаллов всего {}",
+        spread
+    );
+}
+
+#[test]
+fn высушенная_почва_становится_камнем_без_зелёного_блока() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        blocks.insert([0, 0, 0], "minecraft:grass_block");
+        blocks.insert([0, 1, 0], "tiberium:crystal");
+        for dx in -3..=3 {
+            for dz in -3..=3 {
+                blocks.insert([dx, 0, dz], "minecraft:grass_block");
+            }
+        }
+    }
+    with_timeout(|| run(4000));
+    let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    let green = blocks
+        .iter()
+        .filter(|(_, name)| name.contains("tainted"))
+        .count();
+    assert_eq!(green, 0, "зелёный блок заражённой почвы остался в мире");
+    let stone = blocks
+        .iter()
+        .filter(|(_, name)| **name == "minecraft:stone")
+        .count();
+    assert!(stone > 0, "высушенная почва не стала камнем");
+}
+
+#[test]
+fn кристалл_на_стене_получает_настенную_форму() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        blocks.insert([0, 1, 0], "minecraft:stone"); // стена
+        blocks.insert([1, 1, 0], "tiberium:crystal"); // кристалл вплотную к стене
+        blocks.insert([0, 0, 0], "minecraft:dirt"); // земля под стеной
+    }
+    with_timeout(|| run(600));
+    assert_eq!(
+        prop([1, 1, 0], "style").as_deref(),
+        Some("wall_w"),
+        "кристалл у стены не прижался к ней"
+    );
+    assert_eq!(
+        prop([1, 1, 0], "rotation").as_deref(),
+        Some("r0"),
+        "настенный кристалл должен быть без поворота"
+    );
+}
+
+#[test]
+fn кристаллы_продолжают_расти_далеко_от_игрока() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        // Поле далеко от игрока: игрок стоит в [0,1,0], кристалл — в [30,1,0].
+        for dx in 25..=35 {
+            for dz in -3..=3 {
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
+            }
+        }
+        blocks.insert([30, 1, 0], "tiberium:crystal");
+    }
+    with_timeout(|| run(4000));
+    // Далёкий кристалл должен вырасти в полную стадию: значит, он не
+    // замер после того, как игрок отошёл.
+    assert_eq!(
+        prop([30, 1, 0], "shift").as_deref(),
+        Some("p6"),
+        "далёкий кристалл перестал расти"
+    );
+}
+
+#[test]
+fn одиночные_кристаллы_появляются_возле_крупной_структуры() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        // Земля вокруг — чтобы одиночному кристаллу было где появиться.
+        for dx in -60..=60 {
+            for dz in -60..=60 {
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
+            }
+        }
+        // Плотное поле — из него вырастает крупная структура.
+        for dx in -3..=3 {
+            for dz in -3..=3 {
+                for dy in 1..=2 {
+                    blocks.insert([dx, dy, dz], "tiberium:crystal");
+                }
+            }
+        }
+    }
+    // Одиночные кристаллы появляются раз в минуту и не каждый раз, поэтому
+    // проверяем несколько минут подряд.
+    let found = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = found.clone();
+    with_timeout(move || {
+        for _ in 0..6 {
+            run(1200);
+            let far = crystals()
+                .iter()
+                .filter(|p| p[0].abs() > 25 || p[2].abs() > 25)
+                .count();
+            seen.store(far, std::sync::atomic::Ordering::Relaxed);
+            if far >= 1 {
+                break;
+            }
+        }
+    });
+    assert!(
+        found.load(std::sync::atomic::Ordering::Relaxed) >= 1,
+        "одиночные кристаллы рядом со структурой не появились"
+    );
+}
+
+#[test]
+fn массив_не_висит_над_неровной_землёй() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        // Поле кристаллов — из него вырастает крупная структура.
+        for dx in -3..=3 {
+            for dz in -3..=3 {
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
+                blocks.insert([dx, 1, dz], "tiberium:crystal");
+            }
+        }
+        // Ровная земля вокруг поля.
+        for dx in -12..=12 {
+            for dz in -12..=12 {
+                blocks.insert([dx, 0, dz], "minecraft:dirt");
+            }
+        }
+        // Неровный рельеф: с западной стороны земля на два блока ниже.
+        for dx in -6..=-4 {
+            for dz in -6..=6 {
+                blocks.remove(&[dx, 0, dz]);
+                blocks.remove(&[dx, 1, dz]);
+                blocks.insert([dx, -2, dz], "minecraft:dirt");
+            }
+        }
+    }
+    with_timeout(|| run(3000));
+    let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    let columns: Vec<[i32; 3]> = blocks
+        .iter()
+        .filter(|(_, n)| **n == "tiberium:column")
+        .map(|(p, _)| *p)
+        .collect();
+    let base_y = columns.iter().map(|p| p[1]).min().unwrap();
+    let mut gaps = 0;
+    for pos in columns.iter().filter(|p| p[1] == base_y) {
+        // Под нижним блоком массива должна быть земля: массив не должен
+        // висеть над рельефом.
+        let below = [pos[0], pos[1] - 1, pos[2]];
+        let under = blocks
+            .iter()
+            .find(|(p, _)| *p == below.as_slice())
+            .map(|(_, n)| *n)
+            .unwrap_or("minecraft:air");
+        if under == "minecraft:air" {
+            gaps += 1;
+        }
+    }
+    assert_eq!(
+        gaps, 0,
+        "основание массива повисло над землёй: {} блоков",
+        gaps
+    );
 }

@@ -232,10 +232,15 @@ def crystal_model(style, stage, rot, segment):
     # Сплошная сердцевина: без неё между кристалнами скопления видно
     # землю, а блок выглядит пустым. Сверху её не видно — она ниже
     # вершин кристаллов.
-    core_h = max(el["to"][1] for el in elements)
+    # Сердцевина не должна доставать до самой высокой вершины: из-за
+    # этого скопление сужалось к верху. Берём высоту среднего кристалла.
+    heights = sorted(el["to"][1] for el in elements)
+    core_h = max(heights[len(heights) // 2], 2.0)
     if shape == "wall_up":
-        core_h = 16
-    core_w = 3.4 * (0.45 + 0.55 * scale_w)
+        core_h = 16.0
+    # Сердцевина тонкая: иначе она поглощает кристаллы, и скопление
+    # выглядит единым кирпичом, а не гроздью.
+    core_w = 2.4 * (0.45 + 0.55 * scale_w)
     elements.append(element(8 - core_w, 0, 8 - core_w, 8 + core_w, core_h, 8 + core_w, None, "#crystal"))
     return {
         "ambientocclusion": False,
@@ -271,19 +276,6 @@ LEGACY_PNG = {
         "YGAwMtcnS/O5kxchBjAwMDD4uDsxMDMzM7x//56BmZkZA6OL7z5wFOECBgYGho8fPzIwMzMz"
         "sLKyYtWMLo7iBQYGBpwacRmK1wB8GmFyOA3A5lxshmIYMBoGwyIMdu47zEAOYGFggOQqcgEA"
         "2FlMStQTlBcAAAAASUVORK5CYII="
-    ),
-    "block/tainted_soil.png": (
-        "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAB/klEQVR4nFWTQW4bMQxFH0lJ"
-        "4zhOvApyh97/VAVaJG1sz4xEsgsNAnQhEAJI8fPzSd5/vOZ1aSxFuXdnsSMWZTHj3gdLmTEz"
-        "uZ7af3n6dj7hmeweXFoBQAQWMx7DGRHc9oGKcGmVR3fO1UggSXRE4pGoCI/uAOzu3Pqge/C6"
-        "NJop52pEJk/V2EaQOWt0RHCuxu/HRo8AoKpxaYVTMb72Mbsl3Lqze9DDSSAyKSOSpQivS6N7"
-        "oCJcT5U/WwegmbJ7AIGJUFS4d4CgmaIvS8Ej6R6YCutw7t15aRUTqKoI8q1KRQAoKow4FDRT"
-        "TIXMZHOniLIOpwcsgGdSVIlMSDhXwyMpyjRx88FtH1Sb3ZIkMlGB2z64tEKPoEewjkEznXeH"
-        "MiI4Hv6eOQFRwUi6J7/uK++XpyPD+Fw711Odo7y0eqwu2EagAgIEwTqSU1Gu1vjaB0WFosrz"
-        "wcvXPuYa54zCx7ohMpNAWEypOrcQOTWuw4lMft4eqAjla+9UMzLh7fmEihCZVJ1Gbh4Igmcy"
-        "IvCA1pTnWlEBLWoIUE3IhI+1EwmbBz2SERNdAUwmkbd9MGIqmhzkNOvvPjARPteNyJzMp/AY"
-        "/u28iJBwKOUg0YweThHhqRimchg2TySYCbtPfE1giyQjp4kikCmYCJsHHomJHN96EnjbO8+t"
-        "IMDuUx3AP6I9X2L8W1RwAAAAAElFTkSuQmCC"
     ),
     "item/bio_boots.png": (
         "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAUklEQVR4nGNgGAUUA0YY48KL"
@@ -357,23 +349,9 @@ def column_model(style):
     задаёт не блок, а набор блоков. Только на вершине куб дополнен
     кристаллическим гребнем.
     """
+    # Куз целый: без дополнительных элементов, иначе на верхней грани
+    # остаются тёмные полосы от накладок.
     elements = [element(0, 0, 0, 16, 16, 16, None, "#column")]
-    if style == "tip":
-        # Кромка вершины: кристаллический гребень поверх куба.
-        shards = [
-            (5.0, 6.0, 2.6, 15.0, "z", 9.0),
-            (10.5, 7.5, 2.2, 16.0, "z", -11.0),
-            (8.0, 11.0, 2.0, 13.0, "x", 8.0),
-        ]
-        for dx, dz, half, height, axis, angle in shards:
-            cx = min(max(dx, 4.0), 12.0)
-            cz = min(max(dz, 4.0), 12.0)
-            elements.append(
-                element(
-                    cx - half, 0, cz - half, cx + half, height, cz + half,
-                    (axis, angle), "#column", [cx, 0, cz],
-                )
-            )
     tex = f"{NS}:block/crystal"
     return {
         "ambientocclusion": False,
