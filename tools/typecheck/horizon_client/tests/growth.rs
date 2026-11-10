@@ -224,3 +224,53 @@ fn крупная_структура_растёт_из_кристалла_и_н�
         );
     }
 }
+
+#[test]
+fn массив_не_сужается_вверх_и_слои_заполняются_целиком() {
+    let _scene = scene();
+    clear_world();
+    set_player();
+    {
+        let mut blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+        for dx in -9..=9 {
+            for dz in -9..=9 {
+                blocks.push(([dx, 0, dz], "minecraft:dirt"));
+                if (dx + dz) % 2 == 0 && dx.abs() <= 4 && dz.abs() <= 4 {
+                    blocks.push(([dx, 1, dz], "tiberium:crystal"));
+                }
+            }
+        }
+    }
+    with_timeout(|| run(20000));
+    let blocks = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+    let mut by_level: std::collections::BTreeMap<i32, usize> = Default::default();
+    for (pos, name) in blocks.iter() {
+        if *name == "tiberium:column" {
+            *by_level.entry(pos[1]).or_insert(0) += 1;
+        }
+    }
+    assert!(
+        by_level.len() >= 3,
+        "массив вырос меньше чем на три слоя: {:?}",
+        by_level
+    );
+    let levels: Vec<(i32, usize)> = by_level.into_iter().collect();
+    let base = levels[0].1;
+    // Нижние слои заполнены целиком, верхний — ещё нет.
+    for (level, count) in levels.iter() {
+        assert!(
+            *count <= base,
+            "слой {} шире основания: {} против {}",
+            level,
+            count,
+            base
+        );
+    }
+    for (level, count) in levels.iter().take(levels.len() - 1) {
+        assert_eq!(
+            *count, base,
+            "слой {} заполнен не целиком: {} из {}",
+            level, count, base
+        );
+    }
+}
