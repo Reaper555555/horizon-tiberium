@@ -23,6 +23,17 @@ horizon-native-mods/tiberium-0.2.0.hnmod
 Мод собран под Horizon `66f3981f522b24c250b21523a70080965b940424` (API хуков 411) и mixins
 `e8cd0aa38cffef49cb2e088ef716baa107148c02`. После обновления Horizon закрепление нужно обновить.
 
+Если готового архива под рукой нет, его можно собрать прямо из репозитория:
+
+```bash
+git clone --branch feat/v0.2.0 https://github.com/Reaper555555/horizon-tiberium.git
+cd horizon-tiberium/packages
+sh decode-install.sh          # соберёт tiberium-0.2.0-install.zip и проверит sha256
+```
+
+Архив в base64 лежит в `packages/tiberium-0.2.0-install.zip.b64` (репозиторий остаётся текстовым),
+а `decode-install.sh` проверяет контрольную сумму и состав архива перед распаковкой.
+
 ## Что внутри
 
 **Поля тиберия.** Кристаллы растут преимущественно вширь: расползаются по почве, закрепляются на
