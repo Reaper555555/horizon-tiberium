@@ -1,0 +1,8 @@
+# Собирается генератором
+content/assets/tiberium/models/
+content/assets/tiberium/blockstates/
+content/assets/tiberium/textures/
+# Артефакты сборки
+dist/
+tools/typecheck/target/
+tools/typecheck/**/target/
