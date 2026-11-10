@@ -210,6 +210,153 @@ def check_textures(base):
     return refs, missing
 
 
+def check_creative_tabs(base):
+    """Каждый предмет во вкладке креатива должен доходить до текстуры.
+
+    Цепочка: определение (блок или предмет) -> assets/items/<name>.json ->
+    models/item/<name>.json -> текстура. Обрыв в любом месте означает, что
+    в игре вместо иконки будет пустота.
+    """
+    data_root = os.path.join(base, "data")
+    assets_root = os.path.join(base, "assets")
+    checked = 0
+    for dp, _, files in os.walk(data_root):
+        if "creative_tab" not in dp.replace(os.sep, "/"):
+            continue
+        for name in files:
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(dp, name)
+            try:
+                tab = read_json(path)
+            except Exception:
+                continue
+            for item in tab.get("items", []):
+                checked += 1
+                if ":" not in item:
+                    fail(f"{os.path.relpath(path, base)}: непонятный предмет {item}")
+                    continue
+                ns, name = item.split(":", 1)
+                has_block = os.path.exists(
+                    os.path.join(data_root, ns, "horizon", "block", name + ".json")
+                )
+                has_item = os.path.exists(
+                    os.path.join(data_root, ns, "horizon", "item", name + ".json")
+                )
+                if not (has_block or has_item):
+                    fail(f"{item}: нет ни блока, ни предмета с таким id")
+                    continue
+                pointer = os.path.join(assets_root, ns, "items", name + ".json")
+                if not os.path.exists(pointer):
+                    fail(f"{item}: нет указателя модели assets/items/{name}.json")
+                    continue
+                try:
+                    model_id = read_json(pointer)["model"]["model"]
+                except Exception:
+                    fail(f"{item}: указатель модели битый")
+                    continue
+                parts = model_id.split(":")
+                model_path = os.path.join(assets_root, parts[0], "models", *parts[1].split("/"))
+                model_path += ".json"
+                if not os.path.exists(model_path):
+                    fail(f"{item}: нет модели {model_id}")
+                    continue
+                try:
+                    model = read_json(model_path)
+                except Exception:
+                    fail(f"{item}: модель {model_id} битая")
+                    continue
+                textures = model.get("textures", {})
+                if not textures:
+                    # Иконка может быть блочной моделью: идём по родителю.
+                    parent = model.get("parent")
+                    if not parent or ":" not in parent:
+                        fail(f"{item}: у модели {model_id} нет ни текстур, ни родителя")
+                        continue
+                    parts = parent.split(":")
+                    parent_path = os.path.join(
+                        assets_root, parts[0], "models", *parts[1].split("/")
+                    ) + ".json"
+                    if not os.path.exists(parent_path):
+                        fail(f"{item}: нет родителя {parent}")
+                        continue
+                    try:
+                        textures = read_json(parent_path).get("textures", {})
+                    except Exception:
+                        textures = {}
+                    if not textures:
+                        fail(f"{item}: ни модель {model_id}, ни её родитель {parent} "
+                             "не содержат текстур")
+                        continue
+                for value in textures.values():
+                    if not isinstance(value, str) or ":" not in value or value.startswith("#"):
+                        continue
+                    ns2, rest = value.split(":", 1)
+                    tier, tail = rest.split("/", 1)
+                    png = os.path.join(assets_root, ns2, "textures", tier, tail + ".png")
+                    if not os.path.exists(png):
+                        fail(f"{item}: нет текстуры {value}")
+    return checked
+
+
+def check_png(base):
+    """PNG должны быть целыми: сигнатура, CRC чанков и длина данных картинки.
+
+    Игра не показывает битую текстуру, а рисует «отсутствующую» (магента),
+    поэтому сломанный PNG видно только в игре. Здесь это ловится сразу.
+    """
+    import struct
+    import zlib
+
+    tex_root = os.path.join(base, "assets")
+    count = 0
+    for dp, _, files in os.walk(tex_root):
+        for name in files:
+            if not name.endswith(".png"):
+                continue
+            path = os.path.join(dp, name)
+            rel = os.path.relpath(path, base)
+            count += 1
+            data = open(path, "rb").read()
+            if data[:8] != b"\x89PNG\r\n\x1a\n":
+                fail(f"{rel}: не PNG")
+                continue
+            pos = 8
+            idat = b""
+            ihdr = None
+            while pos + 8 <= len(data):
+                length = struct.unpack(">I", data[pos : pos + 4])[0]
+                tag = data[pos + 4 : pos + 8]
+                body = data[pos + 8 : pos + 8 + length]
+                crc = struct.unpack(">I", data[pos + 8 + length : pos + 12 + length])[0]
+                if zlib.crc32(tag + body) & 0xFFFFFFFF != crc:
+                    fail(f"{rel}: битый CRC чанка {tag.decode(errors='replace')}")
+                if tag == b"IHDR":
+                    ihdr = struct.unpack(">IIBBBBB", body)
+                elif tag == b"IDAT":
+                    idat += body
+                pos += 12 + length
+                if tag == b"IEND":
+                    break
+            if ihdr is None:
+                fail(f"{rel}: нет заголовка IHDR")
+                continue
+            width, height, depth, colour = ihdr[0], ihdr[1], ihdr[2], ihdr[3]
+            if depth != 8 or colour != 6:
+                fail(f"{rel}: ожидался RGBA 8 бит, а в файле {colour} и {depth} бит")
+                continue
+            try:
+                raw = zlib.decompress(idat)
+            except zlib.error as exc:
+                fail(f"{rel}: не распаковывается ({exc})")
+                continue
+            expected = (width * 4 + 1) * height
+            if len(raw) != expected:
+                fail(f"{rel}: данных {len(raw)} байт, а картинка {width}x{height} "
+                     f"требует {expected} — текстура нечитаемая")
+    return count
+
+
 def zip_dir(src_dir, out_path, arc_prefix=""):
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for dp, _, files in os.walk(src_dir):
@@ -226,6 +373,10 @@ def main():
     refs = check_blockstates(CONTENT)
     print(f"  ссылок на модели: {refs}")
     tex_refs, _ = check_textures(CONTENT)
+    png_count = check_png(CONTENT)
+    print(f"  PNG проверено: {png_count}")
+    tab_items = check_creative_tabs(CONTENT)
+    print(f"  предметов во вкладках креатива: {tab_items}")
     print(f"  ссылок на текстуры: {tex_refs}")
     check_states(CONTENT)
     check_native()

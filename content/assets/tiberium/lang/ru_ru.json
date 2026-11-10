@@ -1,6 +1,7 @@
 {
   "itemGroup.tiberium.main": "Комплект тибериевого поля",
   "block.tiberium.crystal": "Кристалл тиберия",
+  "block.tiberium.column": "Шестигранная колонна тиберия",
   "block.tiberium.tainted_soil": "Почва, заражённая тиберием",
   "block.tiberium.sonic_pylon": "Ультразвуковой очищающий пилон",
   "item.tiberium.raw_shard": "Необработанный осколок тиберия",
