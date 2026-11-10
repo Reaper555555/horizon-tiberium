@@ -189,6 +189,12 @@ def crystal_model(style, stage, rot, segment):
         # только высотой, а не второй коробкой поверх первой.
     if not elements:
         elements.append(element(6, 0, 6, 10, 8, 10, None, "#crystal"))
+    # Сплошная сердцевина: без неё между кристалнами скопления видно
+    # землю, а блок выглядит пустым. Сверху её не видно — она ниже
+    # вершин кристаллов.
+    core_h = max(el["to"][1] for el in elements)
+    core_w = 3.4 * (0.45 + 0.55 * scale_w)
+    elements.append(element(8 - core_w, 0, 8 - core_w, 8 + core_w, core_h, 8 + core_w, None, "#crystal"))
     return {
         "ambientocclusion": False,
         "render_type": "minecraft:cutout",
@@ -310,25 +316,23 @@ def column_model(style):
     прозрачных дыр на смежных блоках.
     """
     if style == "core":
-        x1, y1, z1, x2, y2, z2 = 0, 0, 0, 16, 16, 16
-        elements = [element(x1, y1, z1, x2, y2, z2, None, "#column")]
+        # Сердцевина — целый блок: массив читается как единая масса.
+        elements = [element(0, 0, 0, 16, 16, 16, None, "#column")]
     else:
-        # Шестигранный срез: пересечение двух прямоугольников.
-        x1, z1, x2, z2 = 3, 5, 13, 11
-        elements = [
-            element(x1, 0, z1, x2, 16, z2, None, "#column"),
-            element(z1, 0, x1, z2, 16, x2, None, "#column"),
-        ]
+        # Боковой блок — половина блока: он прилегает к сердцевине и
+        # образует ступенчатый край. Сверху такая ступенька читается
+        # как сторона треугольника.
+        elements = [element(0, 0, 0, 16, 8, 16, None, "#column")]
         if style == "tip":
-            # Кромка шпиля: несколько наклонённых кристаллов, как гребень.
+            # Кромка вершины: кристаллический гребень поверх ступеньки.
             shards = [
                 (5.0, 6.0, 2.6, 15.0, "z", 9.0),
                 (10.5, 7.5, 2.2, 16.0, "z", -11.0),
                 (8.0, 11.0, 2.0, 13.0, "x", 8.0),
             ]
             for dx, dz, half, height, axis, angle in shards:
-                cx = min(max(dx, x1 + half), x2 - half)
-                cz = min(max(dz, z1 + half), z2 - half)
+                cx = min(max(dx, 4.0), 12.0)
+                cz = min(max(dz, 4.0), 12.0)
                 elements.append(
                     element(
                         cx - half, 0, cz - half, cx + half, height, cz + half,
@@ -520,6 +524,118 @@ def write_json(path, obj):
         f.write("\n")
 
 
+# ------------------------------------------------------- форма и коллизия ---
+
+def model_bounds(model):
+    """Габариты модели в пикселях 0..16 по всем её элементам."""
+    xs, ys, zs = [], [], []
+    for el in model["elements"]:
+        for index, acc in ((0, xs), (1, ys), (2, zs)):
+            acc.append(el["from"][index])
+            acc.append(el["to"][index])
+    return min(xs), min(ys), min(zs), max(xs), max(ys), max(zs)
+
+
+def box_px(x1, y1, z1, x2, y2, z2):
+    """Бокс в единицах блока (0..1) — так их ждёт Horizon."""
+    return [
+        round(x1 / 16.0, 4), round(y1 / 16.0, 4), round(z1 / 16.0, 4),
+        round(x2 / 16.0, 4), round(y2 / 16.0, 4), round(z2 / 16.0, 4),
+    ]
+
+
+def crystal_collision(stage):
+    """Коллизия кристалла по стадии роста: от узкого столбика до
+    почти полного блока. Считается по настоящей модели, чтобы форма
+    и коллизия не расходились."""
+    # Габариты берём по всем формам и поворотам: коллизия должна
+    # покрывать любой кристалл этой стадии.
+    lo = [99.0, 99.0, 99.0]
+    hi = [-99.0, -99.0, -99.0]
+    for style in STYLES:
+        for rot in ROTATIONS:
+            x1, y1, z1, x2, y2, z2 = model_bounds(crystal_model(style, stage, rot, "shaft"))
+            for i, v in enumerate((x1, y1, z1)):
+                lo[i] = min(lo[i], v)
+            for i, v in enumerate((x2, y2, z2)):
+                hi[i] = max(hi[i], v)
+    x1, y1, z1 = lo
+    x2, y2, z2 = hi
+    return box_px(x1, 0, z1, x2, y2, z2)
+
+
+def column_collision(style):
+    """Коллизия блока массива: сердцевина — целый блок, бок — половина."""
+    model = column_model(style)
+    boxes = []
+    for el in model["elements"]:
+        f, t = el["from"], el["to"]
+        boxes.append(box_px(f[0], f[1], f[2], t[0], t[1], t[2]))
+    return boxes
+
+
+def write_block_data():
+    """Описание блоков: форма и коллизия считаются из моделей."""
+    data_dir = os.path.join(CONTENT, "data", NS, "horizon", "block")
+
+    crystal_shapes = {}
+    crystal_collision_shapes = {}
+    for stage in STAGES:
+        box = crystal_collision(stage)
+        crystal_shapes[stage] = [box]
+        crystal_collision_shapes[stage] = [box]
+    write_json(os.path.join(data_dir, "crystal.json"), {
+        "template": "minecraft:glass",
+        "properties": {
+            "hardness": 50.0,
+            "explosion_resistance": 6.0,
+            "light": 5,
+            "sounds": "minecraft:amethyst_block",
+            "requires_tool": True,
+        },
+        "state_properties": {
+            "segment": {"type": "enum", "values": SEGMENTS},
+            "style": {"type": "enum", "values": STYLES},
+            "shift": {"type": "enum", "values": STAGES},
+            "rotation": {"type": "enum", "values": ROTATIONS},
+        },
+        "default_state": {"segment": "shaft", "style": "a", "shift": "p0", "rotation": "r0"},
+        # Форма и коллизия — по стадии роста: маленький кристалл узкий,
+        # зрелый почти полный. Без этого кристалл проходится насквозь.
+        "shapes": {"properties": ["shift"], "values": crystal_shapes,
+                   "default": crystal_shapes["p0"]},
+        "collision_shapes": {"properties": ["shift"], "values": crystal_collision_shapes,
+                             "default": crystal_collision_shapes["p0"]},
+        "item": True,
+    })
+
+    column_shapes = {}
+    column_collision_shapes = {}
+    for style in COLUMN_STYLES:
+        boxes = column_collision(style)
+        column_shapes[style] = boxes
+        column_collision_shapes[style] = boxes
+    write_json(os.path.join(data_dir, "column.json"), {
+        "template": "minecraft:obsidian",
+        "properties": {
+            "hardness": 50.0,
+            "explosion_resistance": 6.0,
+            "light": 4,
+            "sounds": "minecraft:amethyst_block",
+            "requires_tool": True,
+        },
+        "state_properties": {
+            "style": {"type": "enum", "values": COLUMN_STYLES},
+        },
+        "default_state": {"style": "core"},
+        "shapes": {"properties": ["style"], "values": column_shapes,
+                   "default": column_shapes["core"]},
+        "collision_shapes": {"properties": ["style"], "values": column_collision_shapes,
+                             "default": column_collision_shapes["core"]},
+        "item": True,
+    })
+
+
 def main():
     models_dir = os.path.join(CONTENT, "assets", NS, "models", "block")
     bs_dir = os.path.join(CONTENT, "assets", NS, "blockstates")
@@ -553,6 +669,9 @@ def main():
         write_legacy(rel)
     # Своих текстур у колонн нет: все они берут зелёную текстуру кристалла,
     # чтобы шпиль выглядел цельной массой, а не набором разных кубов.
+
+    # 4. Описание блоков: форма и коллизия по моделям.
+    write_block_data()
 
     print(f"стилей: {len(STYLES)} | стадий: {len(STAGES)} | поворотов: {len(ROTATIONS)}")
     print(f"моделей кристаллов: {len(SEGMENTS) * len(STYLES) * len(STAGES) * len(ROTATIONS)}")

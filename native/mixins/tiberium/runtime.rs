@@ -65,11 +65,10 @@ mod cfg {
     /// Шанс роста на стене/потолке (1 из N).
     pub const WALL_CHANCE: u64 = 10;
     /// Максимальная высота кристалла: основание и один наконечник.
-    pub const MAX_HEIGHT: u8 = 2;
+    /// Кристалл всегда один блок: он растёт сменой модели, а не стопкой.
+    pub const MAX_HEIGHT: u8 = 1;
     /// Стадия, на которой кристалл может выпустить наконечник.
-    pub const TIP_STAGE: u8 = 4;
     /// Шанс выпустить наконечник (1 из N за проход роста).
-    pub const TIP_CHANCE: u64 = 24;
     /// Шанс падения кристалла в воздух (1 из N за проход роста).
     pub const FALL_CHANCE: u64 = 8;
     /// Сколько кристаллов нужно, чтобы появился шпиль: сначала должно
@@ -82,7 +81,7 @@ mod cfg {
     /// Минимальная дистанция между шпилями.
     pub const SPIRE_GAP: i32 = 22;
     /// Тиков между проходами роста шпиля.
-    pub const SPIRE_LAYER_TICKS: u64 = 5;
+    pub const SPIRE_LAYER_TICKS: u64 = 20;
     /// Порог плотности тиберия для заражения.
     pub const POISON_DENSITY: f32 = 0.06;
     /// Длительность отравления, тики (1 тик = 1/20 с).
@@ -270,7 +269,6 @@ struct Ids {
     air: BlockStateId,
     dirt: BlockStateId,
     coarse_dirt: BlockStateId,
-    stone: BlockStateId,
     tainted_soil: BlockStateId,
 }
 
@@ -282,7 +280,6 @@ fn ids(game: &Game<'_>) -> Option<Ids> {
         air: reg.default_state("minecraft:air")?,
         dirt: reg.default_state("minecraft:dirt")?,
         coarse_dirt: reg.default_state("minecraft:coarse_dirt")?,
-        stone: reg.default_state("minecraft:stone")?,
         tainted_soil: reg.default_state("tiberium:tainted_soil")?,
     })
 }
@@ -347,15 +344,14 @@ fn place_crystal(
 /// Перекрашивает всю колонку кристалла: одна стадия, один стиль, верх — наконечник.
 fn restyle(game: &mut Game<'_>, site: &Site) {
     let shift = STAGE_NAMES[site.stage.min(MAX_STAGE) as usize];
-    for i in 0..site.height {
-        let pos = [
-            site.base[0],
-            site.base[1] + i as i32,
-            site.base[2],
-        ];
-        let segment = if i + 1 == site.height { "tip" } else { "shaft" };
-        set_props(game, pos, segment, site.style, shift, site.rotation);
-    }
+    set_props(
+        game,
+        site.base,
+        "shaft",
+        site.style,
+        shift,
+        site.rotation,
+    );
 }
 
 // ------------------------------------------------------------------ рост ------
@@ -431,19 +427,6 @@ fn grow_site(game: &mut Game<'_>, ids: &Ids, site: &mut Site, dimension: &str) {
         restyle(game, site);
     }
 
-    // 2. Наконечник: изредка кристалл вырастает на один блок выше. Выше двух
-    //    блоков не вырастает никогда, и на чужой кристалл наконечник не садится.
-    if site.height < cfg::MAX_HEIGHT && site.stage >= cfg::TIP_STAGE {
-        let top = [site.base[0], site.base[1] + 1, site.base[2]];
-        if is_air(game, top) && chance(seed, attempt * 8 + 2, cfg::TIP_CHANCE) {
-            if place_crystal(game, ids, dimension, top, site.style, site.rotation, site.stage, "tip")
-            {
-                site.height = 2;
-                restyle(game, site);
-            }
-        }
-    }
-
     // 3. Расползание вширь: главное занятие тиберия.
     if chance(seed, attempt * 8 + 3, cfg::SPREAD_CHANCE) {
         spread(game, ids, site, dimension);
@@ -481,22 +464,12 @@ fn fall_site(game: &mut Game<'_>, ids: &Ids, site: &mut Site, dimension: &str) {
         return;
     }
     let shift = STAGE_NAMES[site.stage.min(MAX_STAGE) as usize];
-    if site.height > 1 {
-        // Верхний блок убираем, чтобы освободить место под сдвиг.
-        let top = [site.base[0], site.base[1] + 1, site.base[2]];
-        let _ = game.native_set_block(dimension, top, ids.air, UPDATE_FLAGS);
-    }
     if !game.native_set_block(dimension, below, ids.crystal, UPDATE_FLAGS) {
         return;
     }
     set_props_all(game, below, "shaft", site.style, shift, site.rotation);
-    if site.height > 1 {
-        // Прежнее основание становится наконечником.
-        set_props_all(game, site.base, "tip", site.style, shift, site.rotation);
-    } else {
-        // Прежнее место освобождаем: кристалл переехал ниже целиком.
-        let _ = game.native_set_block(dimension, site.base, ids.air, UPDATE_FLAGS);
-    }
+    // Прежнее место освобождаем: кристалл переехал ниже целиком.
+    let _ = game.native_set_block(dimension, site.base, ids.air, UPDATE_FLAGS);
     site.base = below;
 }
 
