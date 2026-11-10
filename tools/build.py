@@ -377,6 +377,35 @@ def zip_dir(src_dir, out_path, arc_prefix=""):
                     z.writestr(info, fh.read())
 
 
+def check_collision(base):
+    """У блоков должны быть объявлены форма и коллизия.
+
+    Стекло и обсидиан из шаблона коллизии не имеют: без своих форм
+    кристалл проходится насквозь, а бок массива стоит как пустое место.
+    """
+    expected = {
+        "crystal": ("shift", 7),
+        "column": ("style", 8),
+    }
+    for name, (prop, count) in expected.items():
+        path = os.path.join(base, "data", "tiberium", "horizon", "block", name + ".json")
+        if not os.path.exists(path):
+            errors.append(f"нет описания блока: {name}")
+            continue
+        data = json.load(open(path, encoding="utf-8"))
+        for key in ("shapes", "collision_shapes"):
+            section = data.get(key)
+            if not isinstance(section, dict):
+                errors.append(f"блок {name}: нет {key}")
+                continue
+            values = section.get("values") or {}
+            if len(values) != count:
+                errors.append(f"блок {name}: в {key} {len(values)} значений вместо {count}")
+            if prop not in (section.get("properties") or []):
+                errors.append(f"блок {name}: в {key} нет свойства {prop}")
+        if "collision_shapes" in data and not data["collision_shapes"].get("values"):
+            errors.append(f"блок {name}: коллизия пустая")
+
 def main():
     print("== Проверки ==")
     n = check_json_tree(CONTENT)
@@ -390,6 +419,8 @@ def main():
     print(f"  предметов во вкладках креатива: {tab_items}")
     print(f"  ссылок на текстуры: {tex_refs}")
     check_states(CONTENT)
+    check_collision(CONTENT)
+    print("  форма и коллизия блоков: проверены")
     check_native()
     hooks = check_mixin_manifest()
     print(f"  хуков в бандле: {len(hooks)}")

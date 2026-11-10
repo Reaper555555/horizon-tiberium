@@ -10,7 +10,7 @@ cat "$B64".part* > "$B64.full"
 base64 -d "$B64.full" > "$OUT"
 rm -f "$B64.full"
 
-python3 - "$OUT" "f8fb3657d91291f0d079f430a075bc60383db6045a03e7ee1bb8c9fe00caf57b" <<'PYEOF'
+python3 - "$OUT" "050ba439c8d8b0a34e46790976c074d35b3be804bb42bf33f4513ef957d726ef" <<'PYEOF'
 import sys, zipfile, hashlib
 data = open(sys.argv[1], "rb").read()
 if hashlib.sha256(data).hexdigest() != sys.argv[2]:
