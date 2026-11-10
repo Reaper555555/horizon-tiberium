@@ -358,12 +358,23 @@ def check_png(base):
 
 
 def zip_dir(src_dir, out_path, arc_prefix=""):
+    """Собирает zip с фиксированным временем файлов.
+
+    Без этого каждая пересборка даёт другой sha256, и проверка в
+    decode-install.sh перестаёт совпадать с тем, что собрано из исходников.
+    """
+    stamp = (2026, 1, 1, 0, 0, 0)
     with zipfile.ZipFile(out_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
         for dp, _, files in os.walk(src_dir):
             for name in sorted(files):
                 full = os.path.join(dp, name)
                 rel = os.path.relpath(full, src_dir)
-                z.write(full, os.path.join(arc_prefix, rel) if arc_prefix else rel)
+                arc = os.path.join(arc_prefix, rel) if arc_prefix else rel
+                info = zipfile.ZipInfo(arc, date_time=stamp)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o644 << 16
+                with open(full, "rb") as fh:
+                    z.writestr(info, fh.read())
 
 
 def main():
@@ -396,12 +407,20 @@ def main():
     hnmod = os.path.join(DIST, f"{ID}-{VERSION}.hnmod")
     zip_dir(CONTENT, hmod)
     # Нативный бандл: манифест + mixins/<id>/
+    stamp = (2026, 1, 1, 0, 0, 0)
     with zipfile.ZipFile(hnmod, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
-        z.write(os.path.join(NATIVE, "horizon-native.json"), "horizon-native.json")
+        def put(src, arc):
+            info = zipfile.ZipInfo(arc, date_time=stamp)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = 0o644 << 16
+            with open(src, "rb") as fh:
+                z.writestr(info, fh.read())
+
+        put(os.path.join(NATIVE, "horizon-native.json"), "horizon-native.json")
         for dp, _, files in os.walk(os.path.join(NATIVE, "mixins")):
             for name in sorted(files):
                 full = os.path.join(dp, name)
-                z.write(full, os.path.relpath(full, NATIVE))
+                put(full, os.path.relpath(full, NATIVE))
     print(f"  {os.path.relpath(hmod, ROOT)}  {os.path.getsize(hmod)} байт")
     print(f"  {os.path.relpath(hnmod, ROOT)}  {os.path.getsize(hnmod)} байт")
 
@@ -418,7 +437,12 @@ def main():
         for dp, _, files in os.walk(stage):
             for name in sorted(files):
                 full = os.path.join(dp, name)
-                z.write(full, os.path.relpath(full, stage))
+                arc = os.path.relpath(full, stage)
+                info = zipfile.ZipInfo(arc, date_time=(2026, 1, 1, 0, 0, 0))
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o644 << 16
+                with open(full, "rb") as fh:
+                    z.writestr(info, fh.read())
     shutil.rmtree(stage)
     print(f"  {os.path.relpath(install, ROOT)}  {os.path.getsize(install)} байт")
 
