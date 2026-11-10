@@ -76,11 +76,13 @@ mod cfg {
     /// разрастись поле, и только потом появляются крупные структуры.
     pub const SPIRE_SITES: usize = 32;
     /// Сколько блоков шпиля ставится за один тик: поблочно, не сразу слоем.
-    pub const SPIRE_BLOCKS_PER_TICK: usize = 3;
+    /// Сколько блоков массива ставится за один шаг роста: по одному.
+    /// Слой заполняется целиком, и только потом начинается следующий.
+    pub const SPIRE_BLOCKS_PER_TICK: usize = 1;
     /// Минимальная дистанция между шпилями.
     pub const SPIRE_GAP: i32 = 22;
     /// Тиков между проходами роста шпиля.
-    pub const SPIRE_LAYER_TICKS: u64 = 20;
+    pub const SPIRE_LAYER_TICKS: u64 = 5;
     /// Порог плотности тиберия для заражения.
     pub const POISON_DENSITY: f32 = 0.06;
     /// Длительность отравления, тики (1 тик = 1/20 с).
@@ -639,17 +641,16 @@ fn ridge_cells(radius: u8, stretch: i32, along_x: bool) -> Vec<(i32, i32)> {
 }
 
 /// Клетки конкретного слоя: от одной точки у основания до широкого гребня.
-fn layer_cells(spire: &Spire, layer: u8) -> Vec<(i32, i32)> {
-    // Слои сужаются вверх: массив основанием стоит на земле, а к вершине
-    // сводится в гребень. Благодаря этому каждый блок стоит на блоке
-    // нижнего слоя и ничего не висит в воздухе.
-    let radius = (spire.radius as i32 - layer as i32).max(0);
-    if radius == 0 {
+fn layer_cells(spire: &Spire, _layer: u8) -> Vec<(i32, i32)> {
+    // Все слои одинаковые: массив не сужается вверх, а растёт ровной
+    // шестигранной колонной. Поэтому блок верхнего слоя всегда стоит на
+    // блоке нижнего и ничего не висит в воздухе.
+    let radius = spire.radius as i32;
+    if radius <= 0 {
         return vec![(0, 0)];
     }
     // Гребень вытянут вдоль наклона и сужается к краям.
-    let stretch = (spire.stretch * radius as i32 / spire.radius.max(1) as i32).max(0);
-    let mut cells = ridge_cells(radius as u8, stretch, spire.lean.1 == 0);
+    let mut cells = ridge_cells(radius as u8, spire.stretch, spire.lean.1 == 0);
     // Порядок от центра наружу: каждый следующий блок касается уже
     // поставленного, иначе крайние блоки слоя висели бы в воздухе.
     cells.sort_by_key(|&(a, b)| (a * a + b * b, a, b));
@@ -776,10 +777,11 @@ fn maybe_spire(centre: [i32; 3]) {
     let pick = (seed % field.len() as u64) as usize;
     let origin = field[pick];
 
-    let radius = 3 + (seed % 3) as u8;
-    let stretch = 3 + ((seed >> 12) % 6) as i32;
+    let radius = 2 + (seed % 3) as u8;
+    let stretch = 2 + ((seed >> 12) % 5) as i32;
     // Вершина сужается до одного блока: выше массив превратился бы в иглу.
-    let height = radius + 3 + ((seed >> 4) % 4) as u8;
+    // Колонна одинакового сечения, поэтому высоты можно больше.
+    let height = radius + 4 + ((seed >> 4) % 5) as u8;
     let lean = match (seed >> 8) % 4 {
         0 => (1, 0),
         1 => (-1, 0),
