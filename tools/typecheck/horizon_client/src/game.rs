@@ -20,10 +20,25 @@ pub static FAKE_PLAYER: std::sync::Mutex<Option<NativeServerPlayer>> =
 pub struct Registry;
 
 impl Registry {
-    pub fn default_state(&self, _id: &str) -> Option<BlockStateId> {
-        // Заглушка отдаёт любой id: иначе мод не найдёт свои блоки и
-        // пути роста не будут проверены тестом на зависание.
-        Some(BlockStateId(1))
+    pub fn default_state(&self, id: &str) -> Option<BlockStateId> {
+        // Разные id для разных блоков: тесту нужно отличать кристалл
+        // от воздуха и от земли.
+        let n = if id.starts_with("tiberium:crystal") {
+            1
+        } else if id == "minecraft:air" {
+            2
+        } else if id == "minecraft:dirt" {
+            3
+        } else if id.starts_with("tiberium:column") {
+            4
+        } else if id.starts_with("tiberium:tainted_soil") {
+            6
+        } else if id == "minecraft:coarse_dirt" {
+            7
+        } else {
+            5
+        };
+        Some(BlockStateId(n))
     }
 }
 
@@ -57,13 +72,17 @@ impl<'a> Game<'a> {
         false
     }
     pub fn native_acting_player(&self) -> Option<NativeServerPlayer> {
-        FAKE_PLAYER.lock().ok().and_then(|p| p.clone())
+        FAKE_PLAYER
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
     pub fn native_server_players(&self) -> Vec<NativeServerPlayer> {
         Vec::new()
     }
     pub fn native_block(&self, pos: [i32; 3]) -> String {
-        if let Ok(map) = FAKE_BLOCKS.lock() {
+        {
+            let map = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
             for (p, name) in map.iter() {
                 if *p == pos {
                     return (*name).to_string();
@@ -79,10 +98,30 @@ impl<'a> Game<'a> {
     pub fn native_set_block(
         &mut self,
         _dimension: &str,
-        _pos: [i32; 3],
-        _state: BlockStateId,
+        pos: [i32; 3],
+        state: BlockStateId,
         _flags: i32,
     ) -> bool {
+        // Фальшивый мир помнит, что поставили: тесты смотрят на результат.
+        {
+            let mut map = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
+            map.retain(|(p, _)| *p != pos);
+            if state.0 == 2 {
+                map.push((pos, "minecraft:air"));
+            } else if state.0 == 1 {
+                map.push((pos, "tiberium:crystal"));
+            } else if state.0 == 3 {
+                map.push((pos, "minecraft:dirt"));
+            } else if state.0 == 4 {
+                map.push((pos, "tiberium:column"));
+            } else if state.0 == 6 {
+                map.push((pos, "tiberium:tainted_soil"));
+            } else if state.0 == 7 {
+                map.push((pos, "minecraft:coarse_dirt"));
+            } else {
+                map.push((pos, "minecraft:stone"));
+            }
+        }
         true
     }
     pub fn native_set_block_property_with(

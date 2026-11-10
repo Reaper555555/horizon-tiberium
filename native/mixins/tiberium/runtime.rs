@@ -59,20 +59,28 @@ mod cfg {
     pub const RESCAN_INTERVAL: u64 = 200;
     /// Шанс расширения кристалла (1 из N).
     pub const WIDEN_CHANCE: u64 = 6;
-    /// Шанс роста вверх (1 из N) — вширь растём чаще.
-    pub const GROW_CHANCE: u64 = 12;
-    /// Шанс расползания по почве (1 из N).
-    pub const SPREAD_CHANCE: u64 = 5;
+    /// Шанс расползания по почве (1 из N). Поле должно расти вширь быстрее,
+    /// чем вверх, поэтому здесь число меньше, чем у роста высоты.
+    pub const SPREAD_CHANCE: u64 = 4;
     /// Шанс роста на стене/потолке (1 из N).
     pub const WALL_CHANCE: u64 = 10;
-    /// Максимальная высота маленького кристалла.
-    pub const MAX_HEIGHT: u8 = 12;
-    /// Сколько кристаллов нужно, чтобы появился шпиль.
-    pub const SPIRE_SITES: usize = 14;
+    /// Максимальная высота кристалла: основание и один наконечник.
+    pub const MAX_HEIGHT: u8 = 2;
+    /// Стадия, на которой кристалл может выпустить наконечник.
+    pub const TIP_STAGE: u8 = 4;
+    /// Шанс выпустить наконечник (1 из N за проход роста).
+    pub const TIP_CHANCE: u64 = 24;
+    /// Шанс падения кристалла в воздух (1 из N за проход роста).
+    pub const FALL_CHANCE: u64 = 8;
+    /// Сколько кристаллов нужно, чтобы появился шпиль: сначала должно
+    /// разрастись поле, и только потом появляются крупные структуры.
+    pub const SPIRE_SITES: usize = 32;
+    /// Сколько блоков шпиля ставится за один тик: поблочно, не сразу слоем.
+    pub const SPIRE_BLOCKS_PER_TICK: usize = 3;
     /// Минимальная дистанция между шпилями.
     pub const SPIRE_GAP: i32 = 22;
-    /// Тиков между слоями шпиля.
-    pub const SPIRE_LAYER_TICKS: u64 = 40;
+    /// Тиков между проходами роста шпиля.
+    pub const SPIRE_LAYER_TICKS: u64 = 20;
     /// Порог плотности тиберия для заражения.
     pub const POISON_DENSITY: f32 = 0.06;
     /// Длительность отравления, тики (1 тик = 1/20 с).
@@ -88,17 +96,25 @@ struct Site {
     stage: u8,
     height: u8,
     seed: u64,
+    /// Сколько раз кристалл уже проходил цикл роста. Все случайные
+    /// решения кристалла завязаны на него, а не на общий тик мира: иначе
+    /// поведение зависит от того, когда кристалл появился.
+    tries: u32,
 }
 
 /// Крупная шестигранная структура.
 #[derive(Clone)]
 struct Spire {
+    /// Точка, из которой вырос шпиль: это существующий кристалл поля.
     base: [i32; 3],
     radius: u8,
     /// Насколько гребень вытянут вдоль наклона.
     stretch: i32,
     height: u8,
+    /// Текущий слой.
     layer: u8,
+    /// Сколько клеток текущего слоя уже поставлено.
+    cursor: usize,
     lean: (i32, i32),
 }
 
@@ -146,17 +162,19 @@ fn pending_sites() -> &'static Mutex<Vec<Site>> {
 /// свободен: growth зовёт spread() и wall_growth(), а те берут тот же
 /// мьютекс — держать его на всё время роста означало бы вечный висяк.
 fn take_sites() -> Option<Vec<Site>> {
-    let mut guard = sites().lock().ok()?;
+    let mut guard = sites().lock().unwrap_or_else(|e| e.into_inner());
     Some(std::mem::take(&mut *guard))
 }
 
 /// Возвращает сайты на место и подбирает те, что созданы во время роста.
 fn restore_sites(list: &mut Vec<Site>) {
     let mut fresh: Vec<Site> = Vec::new();
-    if let Ok(mut pending) = pending_sites().lock() {
+    {
+        let mut pending = pending_sites().lock().unwrap_or_else(|e| e.into_inner());
         fresh.append(&mut pending);
     }
-    if let Ok(mut guard) = sites().lock() {
+    {
+        let mut guard = sites().lock().unwrap_or_else(|e| e.into_inner());
         guard.append(list);
         for site in fresh {
             if !guard.iter().any(|s| s.base == site.base) {
@@ -222,6 +240,9 @@ fn is_soil(game: &Game<'_>, pos: [i32; 3]) -> bool {
             | "minecraft:rooted_dirt"
             | "minecraft:sand"
             | "minecraft:clay"
+            // Высушенная тиберием почва тоже подходит: по ней поле
+            // должно расползаться дальше, иначе рост останавливается.
+            | "tiberium:tainted_soil"
     )
 }
 
@@ -248,6 +269,7 @@ struct Ids {
     dirt: BlockStateId,
     coarse_dirt: BlockStateId,
     stone: BlockStateId,
+    tainted_soil: BlockStateId,
 }
 
 fn ids(game: &Game<'_>) -> Option<Ids> {
@@ -259,6 +281,7 @@ fn ids(game: &Game<'_>) -> Option<Ids> {
         dirt: reg.default_state("minecraft:dirt")?,
         coarse_dirt: reg.default_state("minecraft:coarse_dirt")?,
         stone: reg.default_state("minecraft:stone")?,
+        tainted_soil: reg.default_state("tiberium:tainted_soil")?,
     })
 }
 
@@ -273,6 +296,15 @@ fn set_props(game: &mut Game<'_>, pos: [i32; 3], segment: &str, style: &str, shi
 }
 
 /// Ставит свойства сразу после установки блока: дефолтные значения пропускаем.
+/// Ставит все свойства блока безусловно: нужно, когда блок меняет роль
+/// (например, основание становится наконечником при падении).
+fn set_props_all(game: &mut Game<'_>, pos: [i32; 3], segment: &str, style: &str, shift: &str, rot: &str) {
+    let _ = game.native_set_block_property_with(pos, "segment", segment, UPDATE_FLAGS);
+    let _ = game.native_set_block_property_with(pos, "style", style, UPDATE_FLAGS);
+    let _ = game.native_set_block_property_with(pos, "shift", shift, UPDATE_FLAGS);
+    let _ = game.native_set_block_property_with(pos, "rotation", rot, UPDATE_FLAGS);
+}
+
 fn set_props_fresh(game: &mut Game<'_>, pos: [i32; 3], segment: &str, style: &str, shift: &str, rot: &str) {
     if segment != "shaft" {
         let _ = game.native_set_block_property_with(pos, "segment", segment, UPDATE_FLAGS);
@@ -365,6 +397,7 @@ fn rescan(game: &Game<'_>, centre: [i32; 3]) {
                     stage,
                     height,
                     seed,
+                    tries: 0,
                 });
             }
         }
@@ -373,7 +406,8 @@ fn rescan(game: &Game<'_>, centre: [i32; 3]) {
         return;
     }
     // Список обновляем коротко, без чтения мира под замком.
-    if let Ok(mut list) = sites().lock() {
+    {
+        let mut list = sites().lock().unwrap_or_else(|e| e.into_inner());
         for site in found {
             if !list.iter().any(|s| s.base == site.base) {
                 list.push(site);
@@ -383,60 +417,94 @@ fn rescan(game: &Game<'_>, centre: [i32; 3]) {
 }
 
 /// Один шаг роста кристалла.
-fn grow_site(game: &mut Game<'_>, ids: &Ids, site: &mut Site, tick: u64, dimension: &str) {
+fn grow_site(game: &mut Game<'_>, ids: &Ids, site: &mut Site, dimension: &str) {
     let seed = site.seed;
+    let attempt = site.tries as u128;
+    site.tries = site.tries.wrapping_add(1);
 
-    // 1. Расширение: кристалл толстеет с возрастом.
-    if site.stage < MAX_STAGE && chance(seed, (tick ^ 0x11) as u128, cfg::WIDEN_CHANCE) {
+    // 1. Рост без новых блоков: меняется модель — каждая следующая чуть
+    //    больше предыдущей, но той же формы. Это и есть иллюзия роста.
+    if site.stage < MAX_STAGE && chance(seed, attempt * 8 + 1, cfg::WIDEN_CHANCE) {
         site.stage += 1;
         restyle(game, site);
     }
 
-    // 2. Рост вверх: наконечник тянется выше.
-    if site.height < cfg::MAX_HEIGHT {
-        let top = [
-            site.base[0],
-            site.base[1] + site.height as i32,
-            site.base[2],
-        ];
-        if is_air(game, top) && chance(seed, (tick ^ 0x22) as u128, cfg::GROW_CHANCE) {
-            if place_crystal(game, ids, dimension, top, site.style, site.rotation, site.stage, "shaft")
+    // 2. Наконечник: изредка кристалл вырастает на один блок выше. Выше двух
+    //    блоков не вырастает никогда, и на чужой кристалл наконечник не садится.
+    if site.height < cfg::MAX_HEIGHT && site.stage >= cfg::TIP_STAGE {
+        let top = [site.base[0], site.base[1] + 1, site.base[2]];
+        if is_air(game, top) && chance(seed, attempt * 8 + 2, cfg::TIP_CHANCE) {
+            if place_crystal(game, ids, dimension, top, site.style, site.rotation, site.stage, "tip")
             {
-                site.height += 1;
+                site.height = 2;
                 restyle(game, site);
             }
         }
     }
 
-    // 3. Расползание вширь: главный способ тиберия завоевать землю.
-    if chance(seed, (tick ^ 0x33) as u128, cfg::SPREAD_CHANCE) {
-        spread(game, ids, site, dimension, tick);
+    // 3. Расползание вширь: главное занятие тиберия.
+    if chance(seed, attempt * 8 + 3, cfg::SPREAD_CHANCE) {
+        spread(game, ids, site, dimension);
     }
 
-    // 4. Рост на стенах и потолке.
-    if chance(seed, (tick ^ 0x44) as u128, cfg::WALL_CHANCE) {
-        wall_growth(game, ids, site, dimension, tick);
+    // 4. Рост на стенах и потолке: такой кристалл держится на грани и не падает.
+    if chance(seed, attempt * 8 + 4, cfg::WALL_CHANCE) {
+        wall_growth(game, ids, site, dimension);
     }
 
-    // 5. Осушение: почва вокруг кристалла высыхает и каменеет.
-    if chance(seed, (tick ^ 0x55) as u128, 3) {
+    // 5. Падение: кристалл, оставшийся в воздухе, опускается на землю.
+    if chance(seed, attempt * 8 + 5, cfg::FALL_CHANCE) {
+        fall_site(game, ids, site, dimension);
+    }
+
+    // 6. Осушение: почва вокруг кристалла высыхает и каменеет.
+    if chance(seed, attempt * 8 + 6, 3) {
         dry_soil(game, ids, site, dimension);
     }
 }
 
+/// Кристалл в воздухе падает вниз, пока не встанет на опору.
+fn fall_site(game: &mut Game<'_>, ids: &Ids, site: &mut Site, dimension: &str) {
+    let below = [site.base[0], site.base[1] - 1, site.base[2]];
+    if !is_air(game, below) {
+        return;
+    }
+    // Кристалл на стене или на потолке держится боком и не падает.
+    if is_solid(game, [site.base[0] + 1, site.base[1], site.base[2]])
+        || is_solid(game, [site.base[0] - 1, site.base[1], site.base[2]])
+        || is_solid(game, [site.base[0], site.base[1], site.base[2] + 1])
+        || is_solid(game, [site.base[0], site.base[1], site.base[2] - 1])
+        || is_solid(game, [site.base[0], site.base[1] + 1, site.base[2]])
+    {
+        return;
+    }
+    let shift = STAGE_NAMES[site.stage.min(MAX_STAGE) as usize];
+    if site.height > 1 {
+        // Верхний блок убираем, чтобы освободить место под сдвиг.
+        let top = [site.base[0], site.base[1] + 1, site.base[2]];
+        let _ = game.native_set_block(dimension, top, ids.air, UPDATE_FLAGS);
+    }
+    if !game.native_set_block(dimension, below, ids.crystal, UPDATE_FLAGS) {
+        return;
+    }
+    set_props_all(game, below, "shaft", site.style, shift, site.rotation);
+    if site.height > 1 {
+        // Прежнее основание становится наконечником.
+        set_props_all(game, site.base, "tip", site.style, shift, site.rotation);
+    } else {
+        // Прежнее место освобождаем: кристалл переехал ниже целиком.
+        let _ = game.native_set_block(dimension, site.base, ids.air, UPDATE_FLAGS);
+    }
+    site.base = below;
+}
+
 /// Новый кристалл на соседней почве.
-fn spread(
-    game: &mut Game<'_>,
-    ids: &Ids,
-    site: &Site,
-    dimension: &str,
-    tick: u64,
-) {
+fn spread(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
     let dirs: [[i32; 3]; 4] = [[1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1]];
-    let pick = (hash3(site.base[0], site.base[1], site.base[2], tick ^ 0x66) % 4) as usize;
+    let pick = (hash3(site.base[0], site.base[1], site.base[2], site.tries as u64 ^ 0x66) % 4) as usize;
     let d = dirs[pick];
     // Поле идёт по рельефу: почва может оказаться на уровень ниже или выше.
-    let step = (hash3(site.base[2], site.base[1], site.base[0], tick ^ 0x99) % 3) as usize;
+    let step = (hash3(site.base[2], site.base[1], site.base[0], site.tries as u64 ^ 0x99) % 3) as usize;
     let levels = [site.base[1] - 1, site.base[1], site.base[1] + 1];
     for (offset, ground_y) in levels.iter().enumerate() {
         if offset != step && offset != 1 {
@@ -453,7 +521,8 @@ fn spread(
         if !place_crystal(game, ids, dimension, above, style, rotation, 0, "tip") {
             continue;
         }
-        if let Ok(mut list) = pending_sites().lock() {
+        {
+            let mut list = pending_sites().lock().unwrap_or_else(|e| e.into_inner());
             if !list.iter().any(|s| s.base == above) {
                 list.push(Site {
                     base: above,
@@ -462,6 +531,7 @@ fn spread(
                     stage: 0,
                     height: 1,
                     seed,
+                    tries: 0,
                 });
             }
         }
@@ -470,13 +540,7 @@ fn spread(
 }
 
 /// Кристалл на стене или потолке: растёт из боковой грани и всегда повёрнут.
-fn wall_growth(
-    game: &mut Game<'_>,
-    ids: &Ids,
-    site: &Site,
-    dimension: &str,
-    tick: u64,
-) {
+fn wall_growth(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
     // Шесть направлений: четыре в стороны и два по вертикали.
     let dirs: [[i32; 3]; 6] = [
         [1, 0, 0],
@@ -486,7 +550,7 @@ fn wall_growth(
         [0, 1, 0],
         [0, -1, 0],
     ];
-    let pick = (hash3(site.base[0], site.base[1], site.base[2], tick ^ 0x77) % 6) as usize;
+    let pick = (hash3(site.base[0], site.base[1], site.base[2], site.tries as u64 ^ 0x77) % 6) as usize;
     let d = dirs[pick];
     let level = site.base[1] + site.height as i32 - 1;
     let spot = [site.base[0] + d[0], level + d[1], site.base[2] + d[2]];
@@ -513,7 +577,8 @@ fn wall_growth(
     let seed = hash3(spot[0], spot[1], spot[2], 0xBEEF);
     let style = STYLES[(seed % STYLES.len() as u64) as usize];
     if place_crystal(game, ids, dimension, spot, style, rotation, 0, "tip") {
-        if let Ok(mut list) = pending_sites().lock() {
+        {
+            let mut list = pending_sites().lock().unwrap_or_else(|e| e.into_inner());
             if !list.iter().any(|s| s.base == spot) {
                 list.push(Site {
                     base: spot,
@@ -522,6 +587,7 @@ fn wall_growth(
                     stage: 0,
                     height: 1,
                     seed,
+                    tries: 0,
                 });
             }
         }
@@ -538,7 +604,7 @@ fn dry_soil(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
     let next = match b.as_str() {
         "minecraft:grass_block" => Some(ids.dirt),
         "minecraft:dirt" => Some(ids.coarse_dirt),
-        "minecraft:coarse_dirt" | "minecraft:podzol" => Some(ids.stone),
+        "minecraft:coarse_dirt" | "minecraft:podzol" => Some(ids.tainted_soil),
         _ => None,
     };
     if let Some(state) = next {
@@ -549,10 +615,12 @@ fn dry_soil(game: &mut Game<'_>, ids: &Ids, site: &Site, dimension: &str) {
 // ---------------------------------------------------------------- шпили -------
 
 /// Клетки шестиугольного диска в плоскости XZ (odd-r offset).
-/// Клетки основания шпиля: гребень, вытянутый вдоль наклона.
+/// Клетки слоя шпиля.
 ///
-/// Клетки идут подряд без зазоров, поэтому грань у края срезается и шпиль
-/// читается как цельный шестигранный массив, а не как набор кубов.
+/// У основания это одна клетка — сам кристалл, из которого шпиль вырос.
+/// Дальше слой расширяется, и структура получает гребень, вытянутый вдоль
+/// наклона. Клетки идут подряд без зазоров: крайние блоки срезаются
+/// по углам, и массив читается как шестиугольники, а не как кубы.
 fn ridge_cells(radius: u8, stretch: i32, along_x: bool) -> Vec<(i32, i32)> {
     let r = radius as i32;
     let mut out = Vec::new();
@@ -568,6 +636,24 @@ fn ridge_cells(radius: u8, stretch: i32, along_x: bool) -> Vec<(i32, i32)> {
         }
     }
     out
+}
+
+/// Клетки конкретного слоя: от одной точки у основания до широкого гребня.
+fn layer_cells(spire: &Spire, layer: u8) -> Vec<(i32, i32)> {
+    // Слои сужаются вверх: массив основанием стоит на земле, а к вершине
+    // сводится в гребень. Благодаря этому каждый блок стоит на блоке
+    // нижнего слоя и ничего не висит в воздухе.
+    let radius = (spire.radius as i32 - layer as i32).max(0);
+    if radius == 0 {
+        return vec![(0, 0)];
+    }
+    // Гребень вытянут вдоль наклона и сужается к краям.
+    let stretch = (spire.stretch * radius as i32 / spire.radius.max(1) as i32).max(0);
+    let mut cells = ridge_cells(radius as u8, stretch, spire.lean.1 == 0);
+    // Порядок от центра наружу: каждый следующий блок касается уже
+    // поставленного, иначе крайние блоки слоя висели бы в воздухе.
+    cells.sort_by_key(|&(a, b)| (a * a + b * b, a, b));
+    cells
 }
 
 /// Направление грани для клетки на границе шестиугольника.
@@ -600,66 +686,74 @@ fn edge_style(dx: i32, dz: i32) -> &'static str {
 }
 
 /// Строит очередной слой шпиля.
-fn build_spire_layer(game: &mut Game<'_>, ids: &Ids, spire: &Spire, dimension: &str) {
-    let cells = ridge_cells(spire.radius, spire.stretch, spire.lean.0 != 0);
-    let layer = spire.layer;
-    let top = layer + 1 >= spire.height;
-    let steps = (layer as i32) / 5;
-    let ox = spire.base[0] + spire.lean.0 * steps;
-    let oz = spire.base[2] + spire.lean.1 * steps;
+/// Ставит один блок шпиля. Возвращает true, если блок занял место.
+fn build_spire_block(
+    game: &mut Game<'_>,
+    ids: &Ids,
+    spire: &Spire,
+    dimension: &str,
+    cell: (i32, i32),
+    layer: u8,
+    cells: &[(i32, i32)],
+) -> bool {
+    let (cx, cz) = cell;
+    let ox = spire.base[0];
+    let oz = spire.base[2];
+    // Основание массива стоит на земле рядом с кристаллом-опорой, дальше
+    // каждый слой ложится на предыдущий.
     let oy = spire.base[1] + layer as i32;
+    let pos = [ox + cx, oy, oz + cz];
 
-    // Множество занятых клеток — по нему определяем границу.
-    let occupied: std::collections::HashSet<(i32, i32)> = cells.iter().copied().collect();
-
-    for (cx, cz) in cells.iter() {
-        let wx = ox + cx;
-        let wz = oz + cz;
-        let pos = [wx, oy, wz];
-        let style = if top {
-            "tip"
-        } else {
-            let mut edge = false;
-            for (dx, dz) in [(1, 0), (-1, 0), (1, -1), (0, -1), (0, 1), (1, 1)] {
-                if !occupied.contains(&(cx + dx, cz + dz)) {
-                    edge = true;
-                    break;
-                }
-            }
-            if edge {
-                edge_style(*cx, *cz)
-            } else {
-                "core"
-            }
-        };
-        if !is_block(game, pos, COLUMN) {
-            // Здесь должен быть воздух или почва: сквозь камень шпиль не растёт.
-            if !is_air(game, pos) && !is_soil(game, pos) {
-                continue;
-            }
-            if !game.native_set_block(dimension, pos, ids.column, UPDATE_FLAGS) {
-                continue;
+    let top = layer + 1 >= spire.height;
+    let style = if top {
+        "tip"
+    } else {
+        let mut edge = false;
+        for (dx, dz) in [(1, 0), (-1, 0), (1, -1), (0, -1), (0, 1), (1, 1)] {
+            if !cells.contains(&(cx + dx, cz + dz)) {
+                edge = true;
+                break;
             }
         }
-        let _ = game.native_set_block_property_with(pos, "style", style, UPDATE_FLAGS);
+        if edge {
+            edge_style(cx, cz)
+        } else {
+            "core"
+        }
+    };
+    if !is_block(game, pos, COLUMN) {
+        // Сквозь камень массив не растёт, а кристаллы поля поглощает.
+        if !is_air(game, pos)
+            && !is_soil(game, pos)
+            && !is_block(game, pos, CRYSTAL)
+        {
+            return false;
+        }
+        if !game.native_set_block(dimension, pos, ids.column, UPDATE_FLAGS) {
+            return false;
+        }
     }
+    let _ = game.native_set_block_property_with(pos, "style", style, UPDATE_FLAGS);
+    true
 }
 
 /// Пытается поднять новый шпиль рядом с полем тиберия.
-fn maybe_spire(game: &mut Game<'_>, ids: &Ids, centre: [i32; 3], dimension: &str) {
-    let count = {
-        let list = match sites().lock() {
-            Ok(l) => l,
-            Err(_) => return,
-        };
-        list.iter()
-            .filter(|s| {
-                (s.base[0] - centre[0]).abs() <= cfg::SCAN_RADIUS
-                    && (s.base[2] - centre[2]).abs() <= cfg::SCAN_RADIUS
-            })
-            .count()
-    };
-    if count < cfg::SPIRE_SITES {
+/// Пытается вырасти шпиль из кристалла в достаточно широком поле.
+fn maybe_spire(centre: [i32; 3]) {
+    // Поле должно быть широким: сначала тиберия занимает землю, и только
+    // потом в нём появляются крупные структуры.
+    let mut field: Vec<[i32; 3]> = Vec::new();
+    {
+        let list = sites().lock().unwrap_or_else(|e| e.into_inner());
+        for site in list.iter() {
+            if (site.base[0] - centre[0]).abs() <= cfg::SCAN_RADIUS
+                && (site.base[2] - centre[2]).abs() <= cfg::SCAN_RADIUS
+            {
+                field.push(site.base);
+            }
+        }
+    }
+    if field.len() < cfg::SPIRE_SITES {
         return;
     }
     {
@@ -676,58 +770,68 @@ fn maybe_spire(game: &mut Game<'_>, ids: &Ids, centre: [i32; 3], dimension: &str
             }
         }
     }
+    // Опора шпиля — один из кристаллов поля: структура растёт из него,
+    // а не появляется из воздуха.
     let seed = hash3(centre[0], centre[1], centre[2], 0x5911E);
+    let pick = (seed % field.len() as u64) as usize;
+    let origin = field[pick];
+
     let radius = 3 + (seed % 3) as u8;
     let stretch = 3 + ((seed >> 12) % 6) as i32;
-    let height = 12 + ((seed >> 4) % 16) as u8;
+    // Вершина сужается до одного блока: выше массив превратился бы в иглу.
+    let height = radius + 3 + ((seed >> 4) % 4) as u8;
     let lean = match (seed >> 8) % 4 {
         0 => (1, 0),
         1 => (-1, 0),
         2 => (0, 1),
         _ => (0, -1),
     };
-    // Ставим шпиль на поверхность рядом с полем.
-    let mut ground = centre[1];
-    for dy in 0..12 {
-        let p = [centre[0], centre[1] - dy, centre[2]];
-        if is_solid(game, p) {
-            ground = p[1] + 1;
-            break;
-        }
-    }
     let spire = Spire {
-        base: [centre[0], ground, centre[2]],
+        base: origin,
         radius,
         stretch,
         height,
         layer: 0,
+        cursor: 0,
         lean,
     };
-    build_spire_layer(game, ids, &spire, dimension);
-    let mut spire = spire;
-    spire.layer = 1;
-    if let Ok(mut list) = spires().lock() {
+    {
+        let mut list = spires().lock().unwrap_or_else(|e| e.into_inner());
         list.push(spire);
     }
 }
 
 /// Продвигает шпили: каждый слой ждёт полного предыдущего.
+/// Продвигает шпили: за тик ставится несколько блоков, а не целый слой,
+/// и каждый блок вырастает из уже стоящих.
 fn advance_spires(game: &mut Game<'_>, ids: &Ids, dimension: &str) {
     // Список тоже берём из-под замка: сборка слоя ходит в мир, и держать
     // мьютекс на всё время нельзя.
-    let mut list = match spires().lock() {
-        Ok(mut l) => std::mem::take(&mut *l),
-        Err(_) => return,
+    let mut list = {
+        let mut guard = spires().lock().unwrap_or_else(|e| e.into_inner());
+        std::mem::take(&mut *guard)
     };
     for spire in list.iter_mut() {
         if spire.layer >= spire.height {
             continue;
         }
-        build_spire_layer(game, ids, spire, dimension);
-        spire.layer += 1;
+        let cells = layer_cells(spire, spire.layer);
+        let mut placed = 0;
+        while spire.cursor < cells.len() && placed < cfg::SPIRE_BLOCKS_PER_TICK {
+            let cell = cells[spire.cursor];
+            if build_spire_block(game, ids, spire, dimension, cell, spire.layer, &cells) {
+                placed += 1;
+            }
+            spire.cursor += 1;
+        }
+        if spire.cursor >= cells.len() {
+            spire.layer += 1;
+            spire.cursor = 0;
+        }
     }
     list.retain(|s| s.layer < s.height + 4);
-    if let Ok(mut guard) = spires().lock() {
+    {
+        let mut guard = spires().lock().unwrap_or_else(|e| e.into_inner());
         guard.append(&mut list);
     }
 }
@@ -741,7 +845,8 @@ fn advance_spires(game: &mut Game<'_>, ids: &Ids, dimension: &str) {
 fn density(game: &Game<'_>, pos: [i32; 3], radius: i32) -> f32 {
     let chunk = (pos[0] >> 4, pos[2] >> 4);
     let now = game.native_day_time().max(0) as u64;
-    if let Ok(map) = density_cache().lock() {
+    {
+        let map = density_cache().lock().unwrap_or_else(|e| e.into_inner());
         if let Some((value, stamp)) = map.get(&chunk) {
             if now.saturating_sub(*stamp) < 20 {
                 return *value;
@@ -767,7 +872,8 @@ fn density(game: &Game<'_>, pos: [i32; 3], radius: i32) -> f32 {
     } else {
         found as f32 / total as f32
     };
-    if let Ok(mut map) = density_cache().lock() {
+    {
+        let mut map = density_cache().lock().unwrap_or_else(|e| e.into_inner());
         map.insert(chunk, (value, now));
         if map.len() > 256 {
             map.clear();
@@ -867,7 +973,7 @@ pub fn player_tick(game: &mut Game<'_>) {
             {
                 continue;
             }
-            grow_site(game, &ids, site, tick, &dimension);
+            grow_site(game, &ids, site, &dimension);
         }
         restore_sites(&mut list);
     }
@@ -875,7 +981,7 @@ pub fn player_tick(game: &mut Game<'_>) {
     // Шпили.
     if tick % cfg::SPIRE_LAYER_TICKS == 0 {
         advance_spires(game, &ids, &dimension);
-        maybe_spire(game, &ids, centre, &dimension);
+        maybe_spire(centre);
     }
 }
 
@@ -888,7 +994,8 @@ pub fn tick(game: &mut Game<'_>) {
         return; // только серверный поток
     }
     let counter = SERVER_TICKS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-    if let Ok(mut list) = strikes().lock() {
+    {
+        let mut list = strikes().lock().unwrap_or_else(|e| e.into_inner());
         // Держим две секунды: этого хватает, чтобы погасить поджог от удара.
         list.retain(|(_, t)| counter.saturating_sub(*t) < 40);
     }
@@ -932,15 +1039,38 @@ pub fn tick(game: &mut Game<'_>) {
             let lz = centre[2] + ((hash3(centre[2], centre[1], centre[0], now) % 7) as i32) - 3;
             let cmd = format!("summon lightning_bolt {} {} {}", lx, centre[1] + 2, lz);
             let _ = game.native_run_command(&cmd);
-            if let Ok(mut list) = strikes().lock() {
+            {
+                let mut list = strikes().lock().unwrap_or_else(|e| e.into_inner());
                 list.push(([lx, centre[1] + 2, lz], counter));
             }
         }
     }
 
-    if let Ok(mut p) = picked().lock() {
+    {
+        let mut p = picked().lock().unwrap_or_else(|e| e.into_inner());
         *p = pickups;
     }
+}
+
+/// Сбрасывает состояние мода. Нужен только тестам: без него сценарии
+/// делят общие списки сайтов и шпилей и мешают друг другу.
+pub fn reset_state() {
+    sites().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    spires().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    pending_sites()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    player_ticks()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    picked().lock().unwrap_or_else(|e| e.into_inner()).clear();
+    density_cache()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clear();
+    armor().lock().unwrap_or_else(|e| e.into_inner()).clear();
 }
 
 /// Игрок подобрал предмет: осколок без капсулы заражает.
@@ -952,7 +1082,8 @@ pub fn item_picked_up(game: &mut Game<'_>, player: u128, item: &str, _count: u32
         return;
     }
     let now = game.native_day_time().max(0) as u64;
-    if let Ok(mut p) = picked().lock() {
+    {
+        let mut p = picked().lock().unwrap_or_else(|e| e.into_inner());
         p.retain(|(u, _)| *u != player);
         p.push((player, now));
     }

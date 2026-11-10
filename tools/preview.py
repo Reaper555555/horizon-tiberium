@@ -99,11 +99,98 @@ def render(model, ax):
     ax.axis("off")
 
 
+# --- сборка сцены: крупная структура целиком ------------------------------
+
+EDGE_DIRS = {
+    "e": (1, 0),
+    "ne": (1, 1),
+    "nw": (-1, 1),
+    "w": (-1, 0),
+    "sw": (-1, -1),
+    "se": (1, -1),
+}
+
+
+def hex_disc(radius):
+    """Клетки шестигранного диска (odd-r): основание массива."""
+    cells = []
+    for x in range(-radius, radius + 1):
+        for z in range(-radius, radius + 1):
+            if (abs(x) + abs(z) + abs(x + z)) // 2 <= radius:
+                cells.append((x, z))
+    return cells
+
+
+def column_model_for(x, z, radius):
+    """Внутренние клетки — сплошной блок, крайние — срезанные."""
+    for name, (dx, dz) in EDGE_DIRS.items():
+        if (abs(x + dx) + abs(z + dz) + abs(x + z + dx + dz)) // 2 > radius:
+            return "column_edge_%s" % name
+    return "column_core"
+
+
+def render_scene(scene, ax):
+    """Рисует блоки сцены (модель -> список позиций) в изометрии."""
+    all_polys = []
+    for model_name, positions in scene:
+        with open(os.path.join(MODELS, model_name + ".json"), encoding="utf-8") as fh:
+            model = json.load(fh)
+        for px, py, pz in positions:
+            polys = model_polygons(model)
+            # Модели в координатах 0..16, смещение блока — в тех же единицах.
+            ox, oy = px * 16.0, py * 16.0
+            for poly, shade in polys:
+                moved = [((p[0] + ox), (p[1] + oy)) for p in poly]
+                all_polys.append((moved, shade))
+    all_polys.sort(key=lambda item: -sum(p[0] for p in item[0]))
+    collection = PolyCollection(
+        [poly for poly, _ in all_polys],
+        facecolors=[tuple(min(1.0, c * shade) for c in COLOR) for _, shade in all_polys],
+        edgecolors=(0.05, 0.12, 0.05),
+        linewidths=0.35,
+    )
+    ax.add_collection(collection)
+    xs = [p[0] for poly, _ in all_polys for p in poly]
+    ys = [p[1] for poly, _ in all_polys for p in poly]
+    if xs and ys:
+        pad = 4
+        ax.set_xlim(min(xs) - pad, max(xs) + pad)
+        ax.set_ylim(min(ys) - pad, max(ys) + pad)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+
+def spire_scene():
+    """Массив, каким он вырастает в игре: слои сужаются вверх."""
+    scene = []
+    for layer, radius in enumerate((3, 2, 1)):
+        cells = hex_disc(radius)
+        by_model = {}
+        for x, z in cells:
+            by_model.setdefault(column_model_for(x, z, radius), []).append((x, layer, z))
+        for name, positions in by_model.items():
+            scene.append((name, positions))
+    scene.append(("column_tip", [(0, 3, 0)]))
+    return scene
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("models", nargs="*", default=None)
+    ap.add_argument("--scene", choices=("spire",), default=None)
     ap.add_argument("-o", "--out", default=os.path.join(HERE, "..", "dist", "preview.png"))
     args = ap.parse_args()
+
+    if args.scene == "spire":
+        fig, ax = plt.subplots(figsize=(6.4, 6.4))
+        render_scene(spire_scene(), ax)
+        ax.set_title("крупная структура: слои сужаются вверх", fontsize=9)
+        fig.tight_layout()
+        out = os.path.abspath(args.out)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        fig.savefig(out, dpi=110)
+        print("превью:", out)
+        return
 
     files = args.models
     if not files:

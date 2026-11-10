@@ -185,16 +185,8 @@ def crystal_model(style, stage, rot, segment):
         origin = [(x1 + x2) / 2, 0, (z1 + z2) / 2]
         tilt = (axis, angle) if angle else None
         elements.append(element(x1, 0, z1, x2, h, z2, tilt, "#crystal", origin))
-        if segment == "tip":
-            # острый верх: узкая шапка над основой
-            cap = hw * 0.5
-            elements.append(
-                element(
-                    max(0.0, cx - cap), h, max(0.0, cz - cap),
-                    min(16.0, cx + cap), min(16.0, h + 4.0), min(16.0, cz + cap),
-                    tilt, "#crystal", origin,
-                )
-            )
+        # Каждый кристалл скопления — ровно один элемент. Наконечник отличается
+        # только высотой, а не второй коробкой поверх первой.
     if not elements:
         elements.append(element(6, 0, 6, 10, 8, 10, None, "#crystal"))
     return {
@@ -310,45 +302,46 @@ INSET = 3  # px
 
 
 def column_model(style):
-    """Блок шпиля: шестигранная решётка без зазоров + кристаллическая кромка.
+    """Блок шпиля.
 
-    Текстура у всех колонн одна и та же (зелёная из 0.1.13), поэтому шпиль
-    читается как цельная масса, а не как набор кубов.
+    Сердцевина — целый куб, крайние блоки — шестигранный срез (два
+    скрещённых прямоугольника). Углы у края срезаны, поэтому массив
+    читается как шестиугольники, а не как кубы, и при этом не остаётся
+    прозрачных дыр на смежных блоках.
     """
-    sides = COLUMN_INSET[style]
-    x1 = INSET if "w" in sides else 0
-    x2 = 16 - INSET if "e" in sides else 16
-    z1 = INSET if "n" in sides else 0
-    z2 = 16 - INSET if "s" in sides else 16
-    y1, y2 = (2, 16) if style == "tip" else (0, 16)
-    tex = f"{NS}:block/crystal"
-    elements = [element(x1, y1, z1, x2, y2, z2, None, "#column")]
-    if style == "tip":
-        # Кромка шпиля: несколько наклонённых кристаллов, как гребень.
-        shards = [
-            (5.0, 6.0, 2.6, 13.0, "z", 9.0),
-            (10.5, 7.5, 2.2, 15.0, "z", -11.0),
-            (8.0, 11.0, 2.0, 11.0, "x", 8.0),
+    if style == "core":
+        x1, y1, z1, x2, y2, z2 = 0, 0, 0, 16, 16, 16
+        elements = [element(x1, y1, z1, x2, y2, z2, None, "#column")]
+    else:
+        # Шестигранный срез: пересечение двух прямоугольников.
+        x1, z1, x2, z2 = 3, 5, 13, 11
+        elements = [
+            element(x1, 0, z1, x2, 16, z2, None, "#column"),
+            element(z1, 0, x1, z2, 16, x2, None, "#column"),
         ]
-        for dx, dz, half, height, axis, angle in shards:
-            cx = min(max(dx, x1 + half), x2 - half)
-            cz = min(max(dz, z1 + half), z2 - half)
-            # Кристалл идёт от низа блока вверх: наклон выносит его вершину
-            # за верхнюю грань, и кромка шпиля получается рваной.
-            elements.append(
-                element(
-                    cx - half, 0, cz - half, cx + half, height, cz + half,
-                    (axis, angle), "#column", [cx, 0, cz],
+        if style == "tip":
+            # Кромка шпиля: несколько наклонённых кристаллов, как гребень.
+            shards = [
+                (5.0, 6.0, 2.6, 15.0, "z", 9.0),
+                (10.5, 7.5, 2.2, 16.0, "z", -11.0),
+                (8.0, 11.0, 2.0, 13.0, "x", 8.0),
+            ]
+            for dx, dz, half, height, axis, angle in shards:
+                cx = min(max(dx, x1 + half), x2 - half)
+                cz = min(max(dz, z1 + half), z2 - half)
+                elements.append(
+                    element(
+                        cx - half, 0, cz - half, cx + half, height, cz + half,
+                        (axis, angle), "#column", [cx, 0, cz],
+                    )
                 )
-            )
+    tex = f"{NS}:block/crystal"
     return {
         "ambientocclusion": False,
         "render_type": "minecraft:cutout",
         "textures": {"particle": tex, "column": tex},
         "elements": elements,
     }
-
-
 # --------------------------------------------------------------- текстуры ---
 
 def write_png(path, rgba_rows):
