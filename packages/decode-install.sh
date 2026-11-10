@@ -4,7 +4,7 @@ set -e
 cd "$(dirname "$0")"
 OUT="tiberium-0.2.0-install.zip"
 base64 -d tiberium-0.2.0-install.zip.b64 > "$OUT"
-python3 - "$OUT" "a6c0eb155e994cbe92ae5adf286086a8ad4e763da9e638425385799095993915" <<'PYEOF'
+python3 - "$OUT" "33a5826aad8280c164bab3cfd212783f3421dd215f42c55a001d07ecb23da5dc" <<'PYEOF'
 import sys, zipfile, hashlib
 data = open(sys.argv[1], "rb").read()
 if hashlib.sha256(data).hexdigest() != sys.argv[2]:
