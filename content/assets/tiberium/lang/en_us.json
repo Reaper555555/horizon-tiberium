@@ -1,6 +1,7 @@
 {
   "itemGroup.tiberium.main": "Tiberium Field Kit",
   "block.tiberium.crystal": "Tiberium Crystal",
+  "block.tiberium.column": "Tiberium Hex Column",
   "block.tiberium.tainted_soil": "Tiberium-Tainted Soil",
   "block.tiberium.sonic_pylon": "Sonic Cleansing Pylon",
   "item.tiberium.raw_shard": "Raw Tiberium Shard",

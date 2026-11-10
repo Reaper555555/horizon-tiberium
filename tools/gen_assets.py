@@ -151,6 +151,7 @@ ITEM_ICONS = {
     "sonic_disruptor": "sonic",
     "crystal": "cluster",
     "sonic_pylon": "pylon",
+    "column": "column",
 }
 # Насколько блок срезан с каждой стороны (px) для каждого стиля.
 COLUMN_INSET = {
@@ -187,7 +188,8 @@ def column_model(style):
 def write_png(path, rgba_rows):
     """Минимальный PNG writer (RGBA, 8 бит)."""
     h = len(rgba_rows)
-    w = len(rgba_rows[0])
+    # Ширина в пикселях, а не в байтах: в строке 4 байта на пиксель (RGBA).
+    w = len(rgba_rows[0]) // 4
 
     def chunk(tag, data):
         return (struct.pack(">I", len(data)) + tag + data
@@ -264,6 +266,13 @@ def item_icon(kind):
                         c = light if d < r * 0.55 else base
                     elif d < r + 1.2:
                         c = dark
+            elif kind == "column":
+                # шестигранная колонна: конус сверху и снизу, светлая грань
+                w = 3.6 if abs(cy) <= 3.2 else 1.9
+                if abs(cx) <= w:
+                    c = light if -2.5 < cx < 0.5 else base
+                else:
+                    c = dark
             elif kind == "pylon":
                 # пилон: вертикальная колонна
                 if abs(cx) < 2.5 and -6 < cy < 6:
