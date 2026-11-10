@@ -31,8 +31,9 @@ cd horizon-tiberium/packages
 sh decode-install.sh          # соберёт tiberium-0.2.0-install.zip и проверит sha256
 ```
 
-Архив в base64 лежит в `packages/tiberium-0.2.0-install.zip.b64` (репозиторий остаётся текстовым),
-а `decode-install.sh` проверяет контрольную сумму и состав архива перед распаковкой.
+Архив в base64 разбит на части `packages/tiberium-0.2.0-install.zip.b64.part*` (репозиторий
+остаётся текстовым), а `decode-install.sh` склеивает их, декодирует, сверяет контрольную сумму
+и состав архива перед распаковкой.
 
 ## Что внутри
 
@@ -64,7 +65,17 @@ sh decode-install.sh          # соберёт tiberium-0.2.0-install.zip и п�
 ```bash
 python3 tools/gen_assets.py   # модели, бло��стейты, текстуры
 python3 tools/build.py        # проверки + dist/*.hmod, *.hnmod, install.zip
+python3 tools/preview.py      # превью моделей в изометрии (dist/preview.png)
 ```
+
+Нативную часть можно проверить без сборки всей игры:
+
+```bash
+cd tools/typecheck && cargo test --offline
+```
+
+Тесты ловят зависание серверного потока: если мьютекс снова начнут держать во время
+роста поля, тест упадёт по таймауту с сообщением «тик игрока завис».
 
 `build.py` проверяет, что каждая комбинация свойств блока имеет модель (иначе игра рисует
 «чёрно-фиолетовый» отсутствующий блок), что манифест совпадает с API Horizon и что именованные
