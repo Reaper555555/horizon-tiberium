@@ -1,0 +1,17 @@
+{
+  "itemGroup.tiberium.main": "Tiberium Field Kit",
+  "block.tiberium.crystal": "Tiberium Crystal",
+  "block.tiberium.tainted_soil": "Tiberium-Tainted Soil",
+  "block.tiberium.sonic_pylon": "Sonic Cleansing Pylon",
+  "item.tiberium.raw_shard": "Raw Tiberium Shard",
+  "item.tiberium.empty_capsule": "Empty Containment Capsule",
+  "item.tiberium.sealed_capsule": "Sealed Tiberium Sample",
+  "item.tiberium.sonic_disruptor": "Portable Sonic Disruptor",
+  "item.tiberium.sonic_charge": "Sonic Charge",
+  "item.tiberium.bio_helmet": "Bio-sealed Helmet",
+  "item.tiberium.bio_chestplate": "Bio-sealed Chestplate",
+  "item.tiberium.bio_leggings": "Bio-sealed Leggings",
+  "item.tiberium.bio_boots": "Bio-sealed Boots",
+  "block.tiberium.root_trace": "Tiberium Root Trace",
+  "effect.tiberium.infection": "Tiberium Infection"
+}
