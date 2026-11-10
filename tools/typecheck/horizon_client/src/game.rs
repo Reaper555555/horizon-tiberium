@@ -12,10 +12,19 @@ use horizon_world::level::Dimension;
 use horizon_world::registry::BlockStateId;
 
 /// Фальшивый мир для регрессионных тестов: блоки и игрок.
-pub static FAKE_BLOCKS: std::sync::Mutex<Vec<([i32; 3], &'static str)>> =
-    std::sync::Mutex::new(Vec::new());
+pub static FAKE_BLOCKS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<[i32; 3], &'static str>>,
+> = std::sync::LazyLock::new(|| {
+    std::sync::Mutex::new(std::collections::HashMap::new())
+});
 pub static FAKE_PLAYER: std::sync::Mutex<Option<NativeServerPlayer>> =
     std::sync::Mutex::new(None);
+/// Свойства блоков: что мод выставил (стиль, стадия, поворот).
+pub static FAKE_PROPS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<[i32; 3], std::collections::HashMap<String, String>>>,
+> = std::sync::LazyLock::new(|| {
+    std::sync::Mutex::new(std::collections::HashMap::new())
+});
 
 pub struct Registry;
 
@@ -31,8 +40,6 @@ impl Registry {
             3
         } else if id.starts_with("tiberium:column") {
             4
-        } else if id.starts_with("tiberium:tainted_soil") {
-            6
         } else if id == "minecraft:coarse_dirt" {
             7
         } else {
@@ -83,17 +90,16 @@ impl<'a> Game<'a> {
     pub fn native_block(&self, pos: [i32; 3]) -> String {
         {
             let map = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
-            for (p, name) in map.iter() {
-                if *p == pos {
-                    return (*name).to_string();
-                }
+            if let Some(name) = map.get(&pos) {
+                return (*name).to_string();
             }
         }
         // Пустое место — это воздух, как в игре.
         String::from("minecraft:air")
     }
-    pub fn native_block_property(&self, _pos: [i32; 3], _key: &str) -> Option<String> {
-        None
+    pub fn native_block_property(&self, pos: [i32; 3], key: &str) -> Option<String> {
+        let props = FAKE_PROPS.lock().unwrap_or_else(|e| e.into_inner());
+        props.get(&pos).and_then(|m| m.get(key)).cloned()
     }
     pub fn native_set_block(
         &mut self,
@@ -105,32 +111,34 @@ impl<'a> Game<'a> {
         // Фальшивый мир помнит, что поставили: тесты смотрят на результат.
         {
             let mut map = FAKE_BLOCKS.lock().unwrap_or_else(|e| e.into_inner());
-            map.retain(|(p, _)| *p != pos);
             if state.0 == 2 {
-                map.push((pos, "minecraft:air"));
+                map.insert(pos, "minecraft:air");
             } else if state.0 == 1 {
-                map.push((pos, "tiberium:crystal"));
+                map.insert(pos, "tiberium:crystal");
             } else if state.0 == 3 {
-                map.push((pos, "minecraft:dirt"));
+                map.insert(pos, "minecraft:dirt");
             } else if state.0 == 4 {
-                map.push((pos, "tiberium:column"));
-            } else if state.0 == 6 {
-                map.push((pos, "tiberium:tainted_soil"));
+                map.insert(pos, "tiberium:column");
             } else if state.0 == 7 {
-                map.push((pos, "minecraft:coarse_dirt"));
+                map.insert(pos, "minecraft:coarse_dirt");
             } else {
-                map.push((pos, "minecraft:stone"));
+                map.insert(pos, "minecraft:stone");
             }
         }
         true
     }
     pub fn native_set_block_property_with(
         &mut self,
-        _pos: [i32; 3],
-        _key: &str,
-        _value: &str,
+        pos: [i32; 3],
+        key: &str,
+        value: &str,
         _flags: i32,
     ) -> bool {
+        let mut props = FAKE_PROPS.lock().unwrap_or_else(|e| e.into_inner());
+        props
+            .entry(pos)
+            .or_default()
+            .insert(key.to_string(), value.to_string());
         true
     }
     pub fn native_run_command(&mut self, _line: &str) -> bool {

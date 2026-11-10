@@ -27,10 +27,10 @@ fn рост_поля_не_вешает_поток() {
     // Кристалл на земле: рост, расползание и осушение почвы должны отработать.
     {
         let mut blocks = FAKE_BLOCKS.lock().unwrap();
-        blocks.push(([0, 0, 0], "tiberium:crystal"));
-        blocks.push(([0, -1, 0], "minecraft:dirt"));
-        blocks.push(([1, -1, 0], "minecraft:dirt"));
-        blocks.push(([0, 0, 1], "minecraft:dirt"));
+        blocks.insert([0, 0, 0], "tiberium:crystal");
+        blocks.insert([0, -1, 0], "minecraft:dirt");
+        blocks.insert([1, -1, 0], "minecraft:dirt");
+        blocks.insert([0, 0, 1], "minecraft:dirt");
     }
     {
         let mut player = FAKE_PLAYER.lock().unwrap();
