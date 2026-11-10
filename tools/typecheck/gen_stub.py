@@ -4,35 +4,52 @@
 Horizon-mixins вставляет исходники хелперов как элементы (items) внутрь
 целевой функции. include! так не умеет, поэтому хелперы копируются в тело
 функции буквально — ровно то, что делает инструмент.
+
+Сигнатуры целевых функций взяты из исходников Horizon (crates/horizon-client/
+src/game/native_hooks.rs) на коммите 66f3981f, а привязки — из
+native/mixins/tiberium/horizon-mixin.toml. Заглушка объявляет привязку ровно
+тем типом, который указан в toml, и присваивает ей значение из целевой
+функции. Поэтому несовпадение (например, Game вместо GameLevel у хука
+block_ignite) ломает сборку стенда, а не сборку игры.
 """
 
 import os
+import tomllib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-HELPERS = os.path.abspath(os.path.join(HERE, "..", "..", "native", "mixins", "tiberium"))
+ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
+MIXINS = os.path.join(ROOT, "native", "mixins", "tiberium")
 
-# helper -> (целевая функция, параметры цели, аргументы вызова)
-TARGETS = [
-    ("player_tick.rs", "native_player_tick", "", "self"),
-    ("tick.rs", "native_tick", "", "self"),
-    ("use_item.rs", "native_use_item",
-     "stack: &ItemStack, claimed: &mut bool", "self, stack, claimed"),
-    ("use_item_on.rs", "native_use_item_on",
-     "stack: &ItemStack, pos: [i32; 3], face: [i32; 3], claimed: &mut bool",
-     "self, stack, pos, face, claimed"),
-    ("item_picked_up.rs", "native_item_picked_up",
-     "player: u128, item: &str, count: u32, canceled: &mut bool",
-     "self, player, item, count, canceled"),
-    ("on_equip.rs", "native_on_equip", "slot: &str, new: Option<&ItemStack>", "self, slot, new"),
-    ("compute_fog_color.rs", "native_compute_fog_color",
-     "partial: f32, camera: [f64; 3], fog_type: FogType, rgb: &mut [f32; 3]",
-     "self, partial, camera, fog_type, rgb"),
-    ("camera_shake.rs", "native_camera_shake", "partial: f32, shake: &mut NativeShake",
-     "self, partial, shake"),
-    ("block_ignite.rs", "native_block_ignite",
-     "dimension: Dimension, player: Option<u128>, pos: BlockPos, cause: &str, cancel: &mut bool",
-     "self, dimension, player, pos, cause, cancel"),
-]
+# Настоящие цели хуков: impl -> ("&mut self" | "&self", "параметры").
+# Источник: crates/horizon-client/src/game/native_hooks.rs @ 66f3981f.
+TARGETS = {
+    "player_tick": ("Game", "&mut self", ""),
+    "tick": ("Game", "&mut self", ""),
+    "use_item": ("Game", "&mut self", "stack: &ItemStack, claimed: &mut bool"),
+    "use_item_on": (
+        "Game",
+        "&mut self",
+        "stack: &ItemStack, pos: [i32; 3], face: [i32; 3], claimed: &mut bool",
+    ),
+    "item_picked_up": (
+        "Game",
+        "&mut self",
+        "player: u128, item: &str, count: u32, canceled: &mut bool",
+    ),
+    "on_equip": ("Game", "&mut self", "slot: &str, new: Option<&ItemStack>"),
+    "compute_fog_color": (
+        "Game",
+        "&self",
+        "partial: f32, camera: [f64; 3], fog_type: FogType, rgb: &mut [f32; 3]",
+    ),
+    "camera_shake": ("Game", "&self", "partial: f32, shake: &mut NativeShake"),
+    "block_ignite": (
+        "GameLevel",
+        "&self",
+        "dimension: Dimension, player: Option<u128>, pos: BlockPos, "
+        "cause: &str, cancel: &mut bool",
+    ),
+}
 
 HEADER = '''//! Заглушка игрового контекста Horizon: те же сигнатуры, что и в игре.
 //! Сгенерировано tools/typecheck/gen_stub.py — не править руками.
@@ -151,18 +168,45 @@ def helper_fn_name(text):
 
 
 def main():
+    with open(os.path.join(MIXINS, "horizon-mixin.toml"), "rb") as f:
+        manifest = tomllib.load(f)
+
     out = [HEADER]
-    for helper, target, params, args in TARGETS:
-        path = os.path.join(HELPERS, helper)
-        body = open(path, encoding="utf-8").read().rstrip()
+    methods = {"Game": [], "GameLevel": []}
+    for injection in manifest.get("injection", []):
+        hook = injection.get("hook")
+        if hook not in TARGETS:
+            raise SystemExit(f"неизвестный хук: {hook}")
+        impl, receiver, params = TARGETS[hook]
+        helper = injection["helper"]
+        body = open(os.path.join(MIXINS, helper), encoding="utf-8").read().rstrip()
         name = helper_fn_name(body)
-        out.append(f"""
-    pub fn {target}(&mut self{", " + params if params else ""}) {{
+
+        # Привязки ровно те, что описаны в toml: тип и значение из целевой функции.
+        binds = []
+        for binding in injection.get("bindings", []):
+            binds.append(f"        let {binding['name']}: {binding['ty']} = {binding['value']};")
+        args = ", ".join(b["name"] for b in injection.get("bindings", []))
+        sig = f"    pub fn {hook}({receiver}{', ' + params if params else ''}) {{"
+
+        methods[impl].append(f"""
+{sig}
+{chr(10).join(binds)}
 {body}
         {name}({args});
     }}
 """)
+
+    out.extend(methods["Game"])
+    out.append(
+        "}\n\n"
+        "/// Уровень: в Horizon хук block_ignite вешается на GameLevel, а не на Game.\n"
+        "pub struct GameLevel<'a> {\n    _marker: PhantomData<&'a ()>,\n}\n\n"
+        "impl<'a> GameLevel<'a> {\n"
+    )
+    out.extend(methods["GameLevel"])
     out.append(FOOTER)
+
     dest = os.path.join(HERE, "horizon_client", "src", "game.rs")
     with open(dest, "w", encoding="utf-8") as f:
         f.write("".join(out))
