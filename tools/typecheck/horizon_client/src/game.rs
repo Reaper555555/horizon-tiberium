@@ -11,11 +11,19 @@ use horizon_core::position::BlockPos;
 use horizon_world::level::Dimension;
 use horizon_world::registry::BlockStateId;
 
+/// Фальшивый мир для регрессионных тестов: блоки и игрок.
+pub static FAKE_BLOCKS: std::sync::Mutex<Vec<([i32; 3], &'static str)>> =
+    std::sync::Mutex::new(Vec::new());
+pub static FAKE_PLAYER: std::sync::Mutex<Option<NativeServerPlayer>> =
+    std::sync::Mutex::new(None);
+
 pub struct Registry;
 
 impl Registry {
     pub fn default_state(&self, _id: &str) -> Option<BlockStateId> {
-        None
+        // Заглушка отдаёт любой id: иначе мод не найдёт свои блоки и
+        // пути роста не будут проверены тестом на зависание.
+        Some(BlockStateId(1))
     }
 }
 
@@ -49,13 +57,21 @@ impl<'a> Game<'a> {
         false
     }
     pub fn native_acting_player(&self) -> Option<NativeServerPlayer> {
-        None
+        FAKE_PLAYER.lock().ok().and_then(|p| p.clone())
     }
     pub fn native_server_players(&self) -> Vec<NativeServerPlayer> {
         Vec::new()
     }
-    pub fn native_block(&self, _pos: [i32; 3]) -> String {
-        String::new()
+    pub fn native_block(&self, pos: [i32; 3]) -> String {
+        if let Ok(map) = FAKE_BLOCKS.lock() {
+            for (p, name) in map.iter() {
+                if *p == pos {
+                    return (*name).to_string();
+                }
+            }
+        }
+        // Пустое место — это воздух, как в игре.
+        String::from("minecraft:air")
     }
     pub fn native_block_property(&self, _pos: [i32; 3], _key: &str) -> Option<String> {
         None
